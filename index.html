@@ -103,6 +103,15 @@ nav.tabs button[aria-selected="true"]{color:var(--accent);font-weight:700}
 button.icon.edit:hover{color:var(--accent)}
 button.icon svg{width:18px;height:18px}
 #body-stats{grid-template-columns:repeat(2,1fr)}
+.date-nav{display:grid;grid-template-columns:48px 1fr 48px;gap:8px;align-items:center}
+.date-nav button{padding:0;font-size:26px;line-height:1;min-height:48px}
+.date-nav input[type=date]{font-size:17px;font-weight:700;text-align:center;min-height:48px;cursor:pointer;-webkit-appearance:none;appearance:none}
+.date-nav input[type=date]::-webkit-date-and-time-value{text-align:center}
+.date-nav input[type=date]::-webkit-calendar-picker-indicator{width:22px;height:22px;opacity:.85;cursor:pointer}
+.date-sub{font-size:13px;color:var(--text2);text-align:center;margin-top:4px;min-height:1.5em}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chips button{min-height:38px;padding:0 12px;border-radius:19px;font-size:14px;background:var(--bg)}
+.chips button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:700}
 .stat .sub{font-size:11px;color:var(--text2)}
 textarea{min-height:64px;resize:vertical}
 .advice ul{margin:0 0 6px;padding-left:20px}
@@ -142,13 +151,13 @@ button.danger{background:var(--danger);border-color:var(--danger);color:#fff;fon
   <section class="view active" id="view-log">
     <div class="card">
       <h2 id="log-title">トレーニングを記録</h2>
-      <div class="row">
-        <div class="field"><label for="w-date">日付</label><input type="date" id="w-date"></div>
-      </div>
+      <div class="field"><label for="w-date">日付</label>
+        <div class="date-nav"><button type="button" class="dn-prev" aria-label="前の日">‹</button><input type="date" id="w-date"><button type="button" class="dn-next" aria-label="次の日">›</button></div>
+        <div class="date-sub"></div></div>
       <div class="field">
-        <label for="w-ex">種目</label>
-        <input id="w-ex" list="ex-list" placeholder="例：ベンチプレス" autocomplete="off">
-        <datalist id="ex-list"></datalist>
+        <label for="w-ex">種目（下から選ぶか、入力）</label>
+        <input id="w-ex" placeholder="例：ベンチプレス" autocomplete="off">
+        <div class="chips" id="ex-chips"></div>
         <div class="hint" id="last-hint"></div>
       </div>
 
@@ -225,7 +234,9 @@ button.danger{background:var(--danger);border-color:var(--danger);color:#fff;fon
   <section class="view" id="view-body">
     <div class="card">
       <h2>体重・体脂肪率を記録</h2>
-      <div class="field"><label for="b-date">日付</label><input type="date" id="b-date"></div>
+      <div class="field"><label for="b-date">日付</label>
+        <div class="date-nav"><button type="button" class="dn-prev" aria-label="前の日">‹</button><input type="date" id="b-date"><button type="button" class="dn-next" aria-label="次の日">›</button></div>
+        <div class="date-sub"></div></div>
       <div class="row">
         <div class="field"><label for="b-w">体重</label><div class="unit-wrap"><input type="number" inputmode="decimal" step="0.1" min="0" id="b-w" placeholder="例：68.5"><span>kg</span></div></div>
         <div class="field"><label for="b-f">体脂肪率</label><div class="unit-wrap"><input type="number" inputmode="decimal" step="0.1" min="0" max="80" id="b-f" placeholder="例：18.2"><span>%</span></div></div>
@@ -312,7 +323,8 @@ const bmi = w => (w>0 && profile.height>0) ? w/Math.pow(profile.height/100,2) : 
 const bmiLabel = b => b<18.5?"低体重": b<25?"普通体重": b<30?"肥満（1度）": b<35?"肥満（2度）": b<40?"肥満（3度）":"肥満（4度）";
 
 // ---------- utils ----------
-const todayStr = () => { const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); };
+const ymd = d => d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+const todayStr = () => ymd(new Date());
 const uid = () => Date.now().toString(36)+Math.random().toString(36).slice(2,8);
 const fmt = (n,d=1) => (Math.round(n*Math.pow(10,d))/Math.pow(10,d)).toLocaleString("ja-JP",{maximumFractionDigits:d});
 const e1rm = (w,r) => r<=1 ? w : w*(1+r/30); // Epley
@@ -376,7 +388,30 @@ $("#q-apply").onclick=()=>{
   if(w===""||r===""||!(n>0)){ toast("重量・回数・セット数を入力してください"); return; }
   $("#sets").innerHTML=""; for(let i=0;i<Math.min(n,30);i++) setRow(w,r);
 };
-$("#w-ex").addEventListener("input", showLastHint);
+$("#w-ex").addEventListener("input", ()=>{ showLastHint(); renderChips(); });
+
+// ---------- 日付（‹ › で1日ずつ動かせる・どこを押してもカレンダーが開く） ----------
+function setupDate(id){
+  const inp=$("#"+id), wrap=inp.parentElement, sub=wrap.nextElementSibling, next=wrap.querySelector(".dn-next");
+  const upd=()=>{ const v=inp.value; next.disabled = !v || v>=todayStr();
+    if(!v){ sub.textContent=""; return; }
+    const diff=Math.round(dayNum(todayStr())-dayNum(v));
+    sub.textContent=jpDate(v)+(diff===0?"・今日":diff===1?"・昨日":diff>1?`・${diff}日前`:"・未来の日付"); };
+  const shift=n=>{ const [y,m,d]=(inp.value||todayStr()).split("-").map(Number); inp.value=ymd(new Date(y,m-1,d+n)); upd(); };
+  wrap.querySelector(".dn-prev").onclick=()=>shift(-1);
+  next.onclick=()=>shift(1);
+  inp.addEventListener("change",upd); inp.addEventListener("input",upd);
+  inp.addEventListener("click",()=>{ try{ if(inp.showPicker) inp.showPicker(); }catch(e){} });
+  inp._upd=upd; upd();
+}
+function setDate(id,v){ const inp=$("#"+id); inp.value=v; if(inp._upd) inp._upd(); }
+
+// ---------- 種目ボタン ----------
+function renderChips(){
+  const {all}=exerciseNames(), cur=$("#w-ex").value.trim();
+  $("#ex-chips").innerHTML=all.slice(0,16).map(n=>`<button type="button" data-ex="${esc(n)}" aria-pressed="${n===cur}">${esc(n)}</button>`).join("");
+}
+$("#ex-chips").onclick=e=>{ const b=e.target.closest("[data-ex]"); if(!b) return; $("#w-ex").value=b.dataset.ex; renderChips(); showLastHint(); };
 function showLastHint(){
   const name=$("#w-ex").value.trim(); const h=$("#last-hint");
   const prev=Object.entries(state.entries).filter(([id,e])=>e.kind==="workout"&&id!==editingId&&e.exercise===name).map(([,e])=>e)
@@ -413,7 +448,7 @@ let editingId=null;
 function startEdit(id){
   const w=state.entries[id]; if(!w || w.kind!=="workout") return;
   editingId=id;
-  $("#w-date").value=w.date; $("#w-ex").value=w.exercise; $("#w-memo").value=w.memo||"";
+  setDate("w-date", w.date); $("#w-ex").value=w.exercise; $("#w-memo").value=w.memo||"";
   $("#sets").innerHTML=""; w.sets.forEach(s=>setRow(String(s.w),String(s.r)));
   if(!w.sets.length) setRow();
   $("#log-title").textContent="記録を修正";
@@ -427,7 +462,7 @@ function endEdit(){
   $("#log-title").textContent="トレーニングを記録";
   $("#save-workout").textContent="保存する";
   $("#cancel-edit").style.display="none";
-  $("#w-date").value=todayStr(); $("#w-ex").value=""; $("#w-memo").value="";
+  setDate("w-date", todayStr()); $("#w-ex").value=""; $("#w-memo").value="";
   resetSets(); renderAll();
 }
 $("#cancel-edit").onclick=()=>{ endEdit(); toast("修正をやめました"); };
@@ -469,7 +504,7 @@ $("#h-ex").onchange=renderHistory;
 // ---------- rendering ----------
 function renderAll(){
   const {used,all}=exerciseNames();
-  $("#ex-list").innerHTML=all.map(n=>`<option value="${esc(n)}">`).join("");
+  renderChips();
   const fillSel=(sel,list,withAll)=>{ const cur=sel.value; sel.innerHTML=(withAll?`<option value="">すべて</option>`:"")+list.map(n=>`<option>${esc(n)}</option>`).join("");
     if([...sel.options].some(o=>o.value===cur)) sel.value=cur; };
   fillSel($("#c-ex"), used.length?used:["（記録なし）"], false);
@@ -792,6 +827,7 @@ $("#import-file").onchange=async ev=>{
 
 // ---------- init ----------
 $("#w-date").value=todayStr(); $("#b-date").value=todayStr(); $("#b-h").value=profile.height||"";
+setupDate("w-date"); setupDate("b-date");
 resetSets(); refreshKeyUI();
 initStorage();
 if("serviceWorker" in navigator && location.protocol!=="file:"){
