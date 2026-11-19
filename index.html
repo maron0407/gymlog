@@ -102,6 +102,17 @@ nav.tabs button[aria-selected="true"]{color:var(--accent);font-weight:700}
 .entry.editing{background:var(--bg);border-radius:10px;padding-left:8px;padding-right:8px}
 button.icon.edit:hover{color:var(--accent)}
 button.icon svg{width:18px;height:18px}
+#body-stats{grid-template-columns:repeat(2,1fr)}
+.stat .sub{font-size:11px;color:var(--text2)}
+textarea{min-height:64px;resize:vertical}
+.advice ul{margin:0 0 6px;padding-left:20px}
+.advice li{margin:4px 0;font-size:14px}
+.advice h3{font-size:15px;margin:18px 0 8px}
+.next{background:var(--bg);border-radius:10px;padding:10px 12px;margin:0 0 10px;font-variant-numeric:tabular-nums}
+.next .k{font-size:12px;color:var(--text2)}
+.next b{font-size:17px}
+.ai-out{white-space:pre-wrap;background:var(--bg);border-radius:10px;padding:12px;font-size:14px;margin-top:10px;display:none}
+.ai-out.show{display:block}
 .badge{display:inline-block;font-size:11px;font-weight:700;color:var(--pr);border:1px solid var(--pr);border-radius:6px;padding:0 5px;margin-left:6px;vertical-align:1px}
 table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
 th,td{padding:6px 4px;border-bottom:1px solid var(--border);text-align:right}
@@ -191,6 +202,23 @@ button.danger{background:var(--danger);border-color:var(--danger);color:#fff;fon
       <div class="hint" id="metric-note"></div>
       <details><summary>表で見る</summary><div id="ex-table"></div></details>
     </div>
+
+    <div class="card advice">
+      <h2>トレーニングアドバイス</h2>
+      <div id="advice-auto"></div>
+      <h3>AIに相談する</h3>
+      <div class="field"><label for="ai-q">目標・相談したいこと（任意）</label>
+        <textarea id="ai-q" placeholder="例：3ヶ月でベンチプレス80kgを上げたい"></textarea></div>
+      <button class="primary" id="ai-ask">この種目についてAIに相談</button>
+      <div class="hint" id="ai-note"></div>
+      <div class="ai-out" id="ai-out" aria-live="polite"></div>
+      <details><summary>AIの設定（APIキー）</summary>
+        <div class="field" style="margin-top:8px"><label for="ai-key">Anthropic APIキー</label>
+          <input type="password" id="ai-key" autocomplete="off" spellcheck="false" placeholder="sk-ant-..."></div>
+        <div class="row"><button type="button" id="ai-key-save">保存</button><button type="button" id="ai-key-del">削除</button></div>
+        <p class="hint">キーはこのスマホの中だけに保存されます（バックアップにも含まれません）。相談するときは、この種目の記録・体重・身長・相談内容がAnthropic（Claudeの会社）に送られます。費用は1回10円前後です。キーは console.anthropic.com で作れます。</p>
+      </details>
+    </div>
   </section>
 
   <!-- 体組成 -->
@@ -202,8 +230,9 @@ button.danger{background:var(--danger);border-color:var(--danger);color:#fff;fon
         <div class="field"><label for="b-w">体重</label><div class="unit-wrap"><input type="number" inputmode="decimal" step="0.1" min="0" id="b-w" placeholder="例：68.5"><span>kg</span></div></div>
         <div class="field"><label for="b-f">体脂肪率</label><div class="unit-wrap"><input type="number" inputmode="decimal" step="0.1" min="0" max="80" id="b-f" placeholder="例：18.2"><span>%</span></div></div>
       </div>
+      <div class="field"><label for="b-h">身長（一度保存すれば次から入力不要）</label><div class="unit-wrap"><input type="number" inputmode="decimal" step="0.1" min="50" max="250" id="b-h" placeholder="例：170"><span>cm</span></div></div>
       <button class="primary" id="save-body">保存する</button>
-      <div class="hint">どちらか片方だけでも記録できます。同じ日付は上書きされます。</div>
+      <div class="hint">体重・体脂肪率はどちらか片方だけでも記録できます。同じ日付は上書きされます。身長を入れるとBMIが表示されます。</div>
     </div>
 
     <div class="card">
@@ -275,6 +304,12 @@ const state = { entries: {} };   // id -> entry
 let store = null;                 // {set(id,obj), del(id)}
 let metric = "max", range = 0, brange = 0;
 const charts = {}; // key -> rendered flag
+const PROFILE_KEY = "gymlog.profile", AI_KEY = "gymlog.apiKey";
+let profile = { height: null };   // 身長は記録ではなく設定として1つだけ保存
+try{ const p=JSON.parse(localStorage.getItem(PROFILE_KEY)||"null"); if(p && p.height>0) profile=p; }catch(e){}
+function saveProfile(){ try{ localStorage.setItem(PROFILE_KEY, JSON.stringify(profile)); }catch(e){} }
+const bmi = w => (w>0 && profile.height>0) ? w/Math.pow(profile.height/100,2) : null;
+const bmiLabel = b => b<18.5?"低体重": b<25?"普通体重": b<30?"肥満（1度）": b<35?"肥満（2度）": b<40?"肥満（3度）":"肥満（4度）";
 
 // ---------- utils ----------
 const todayStr = () => { const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); };
@@ -399,15 +434,21 @@ $("#cancel-edit").onclick=()=>{ endEdit(); toast("修正をやめました"); };
 
 // ---------- body ----------
 $("#save-body").onclick=async()=>{
-  const date=$("#b-date").value||todayStr(); const w=parseFloat($("#b-w").value), f=parseFloat($("#b-f").value);
-  if(isNaN(w)&&isNaN(f)){ toast("体重か体脂肪率を入力してください"); return; }
+  const date=$("#b-date").value||todayStr(); const w=parseFloat($("#b-w").value), f=parseFloat($("#b-f").value), h=parseFloat($("#b-h").value);
+  if(!isNaN(h) && (h<50 || h>250)){ toast("身長はcmで入力してください（例：170）"); return; }
+  const hChanged = !isNaN(h) && h!==profile.height;
+  if(hChanged){ profile.height=h; saveProfile(); }
+  if(isNaN(w)&&isNaN(f)){
+    if(hChanged){ renderBody(); toast("身長を保存しました"); return; }
+    toast("体重か体脂肪率を入力してください"); return;
+  }
   const existing=bodies().find(b=>b.date===date);
   const id = existing ? Object.keys(state.entries).find(k=>state.entries[k]===existing) : "body-"+date;
   const obj={kind:"body",date,t:Date.now(),
     weight: !isNaN(w)?w:(existing?existing.weight??null:null),
     fat: !isNaN(f)?f:(existing?existing.fat??null:null)};
   await store.set(id,obj);
-  $("#b-w").value=""; $("#b-f").value=""; toast("保存しました");
+  $("#b-w").value=""; $("#b-f").value=""; $("#b-h").value=profile.height||""; toast("保存しました");
 };
 
 // ---------- tabs & segmented ----------
@@ -571,16 +612,136 @@ function renderExChart(){
   if(has) lineChart("ex",$("#ex-chart"), s.map(x=>x.date), s.map(x=>x.v), m.unit, m.d, "--series-1");
   $("#ex-table").innerHTML = has ? `<table><thead><tr><th>日付</th><th>${m.label}</th><th>セット</th></tr></thead><tbody>`+
     s.slice().reverse().map(x=>`<tr><td>${shortDate(x.date)}</td><td>${fmt(x.v,m.d)} ${m.unit}</td><td>${x.sets.length}</td></tr>`).join("")+"</tbody></table>" : "";
+  renderAdvice();
 }
+
+// ---------- advice (自動分析：無料・通信なし) ----------
+const roundTo=(v,st)=>Math.round(v/st)*st;
+function analyze(ex){
+  const ss=dailySeries(ex, METRIC.e1rm.f, 0);   // 古い順、1日ごと {date, v:その日の最高推定1RM, sets}
+  if(!ss.length) return null;
+  const today=todayStr(), last=ss[ss.length-1];
+  const gap=Math.round(dayNum(today)-dayNum(last.date));
+  const top=last.sets.reduce((a,s)=>(s.w>a.w||(s.w===a.w&&s.r>a.r))?s:a, last.sets[0]);
+  const work=last.sets.filter(s=>s.w===top.w), nSets=work.length, minR=Math.min(...work.map(s=>s.r));
+  const best=Math.max(...ss.map(x=>x.v)), sinceBest=ss.length-1-ss.findIndex(x=>x.v===best);
+  const recent=ss.filter(x=>dayNum(today)-dayNum(x.date)<=28).length;
+  const step=top.w>=20?2.5:1;
+  const points=[]; let next;
+  if(top.w===0){
+    next=`自重 × ${top.r+1}回 × ${nSets}セット`;
+    points.push("自重の種目は、まず1セットの回数を1回ずつ増やしていきましょう。");
+  }else if(gap>=14){
+    next=`${fmt(roundTo(top.w*0.9,step),2)}kg × ${minR}回 × ${nSets}セット`;
+    points.push(`前回から${gap}日あいています。重量を1割ほど落とし、フォームを確かめながら再開しましょう。`);
+  }else if(ss.length>=6 && sinceBest>=3){
+    next=`${fmt(roundTo(top.w*0.9,step),2)}kg × ${minR}回 × ${nSets}セット（軽めの日）`;
+    points.push(`推定1RMが${sinceBest}回続けて更新されていません（停滞気味）。一度、重量を1割落とした軽めの日を入れて回復させてから再挑戦しましょう。`);
+    points.push("回数の幅を変える（例：重めで5回、または軽めで12回）のも、停滞を抜けるのに有効です。");
+  }else if(minR>=10){
+    next=`${fmt(top.w+step,2)}kg × 8回 × ${nSets}セット`;
+    points.push(`前回は${fmt(top.w,2)}kgで全セット10回以上できています。${fmt(step,2)}kg上げて、8回から始めましょう。`);
+  }else{
+    next=`${fmt(top.w,2)}kg × ${minR+1}回 × ${nSets}セット`;
+    points.push(`前回は${fmt(top.w,2)}kg × ${minR}回。同じ重量で回数を1回ずつ増やし、全セット10回できたら重量を上げましょう。`);
+  }
+  if(sinceBest===0 && ss.length>1) points.unshift("前回、推定1RMの自己ベストを更新しました。順調です！");
+  if(recent<=2 && gap<14) points.push(`この4週間の実施は${recent}日です。伸ばしたい種目は週1〜2回を目安に続けると効果的です。`);
+  return {next, points};
+}
+let aiBusy=false;
+function renderAdvice(){
+  const ex=$("#c-ex").value, el=$("#advice-auto"), a=state.entries && analyze(ex);
+  if(!a){ el.innerHTML=`<div class="empty">この種目の記録がたまると、ここに次回の目安が表示されます</div>`; $("#ai-ask").disabled=true; return; }
+  el.innerHTML=`<div class="next"><div class="k">次回の目安（${esc(ex)}）</div><b>${esc(a.next)}</b></div>
+    <ul>${a.points.map(p=>`<li>${esc(p)}</li>`).join("")}</ul>
+    <div class="hint">記録から自動で計算した目安です。体調に合わせて調整してください。</div>`;
+  $("#ai-ask").disabled=aiBusy;
+}
+
+// ---------- AI相談（Claude。APIキーを登録した場合だけ） ----------
+const SDK_URL="https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.5.0/+esm";
+let AnthropicLib=null;
+function getKey(){ try{ return localStorage.getItem(AI_KEY)||""; }catch(e){ return ""; } }
+function refreshKeyUI(){
+  const k=getKey(); $("#ai-key").value="";
+  $("#ai-key").placeholder=k?"保存済み（変えるときだけ入力）":"sk-ant-...";
+  $("#ai-note").textContent=k?"":"AIに相談するには、下の「AIの設定」でAPIキーを登録してください。上の自動アドバイスはキーがなくても使えます。";
+}
+$("#ai-key-save").onclick=()=>{ const v=$("#ai-key").value.trim(); if(!v){ toast("APIキーを入力してください"); return; }
+  try{ localStorage.setItem(AI_KEY,v); }catch(e){} refreshKeyUI(); toast("APIキーを保存しました"); };
+$("#ai-key-del").onclick=async()=>{ if(!getKey()){ toast("APIキーは保存されていません"); return; }
+  if(await confirmBox("保存しているAPIキーを削除しますか？")){ try{ localStorage.removeItem(AI_KEY); }catch(e){} refreshKeyUI(); toast("削除しました"); } };
+$("#c-ex").addEventListener("change",()=>{ const o=$("#ai-out"); o.textContent=""; o.classList.remove("show"); });
+
+const AI_SYSTEM=`あなたは筋力トレーニングのコーチです。ユーザーの1種目の記録をもとに、今後この種目をどう進めればよいかを日本語でアドバイスします。
+- 最初に、記録の傾向（伸びている・停滞している・間隔があいている など）を2〜3文でまとめる
+- 次に、これから2〜4週間の具体的な進め方（重量・回数・セット数・頻度）を提案する
+- 停滞しているなら、考えられる原因と対策を示す。必要ならフォームや補助種目にも触れる
+- アプリの自動分析と違う提案をするときは、その理由を書く
+- スマホで読むので全体で400〜600字程度にする。見出しは【】で囲み、箇条書きは「・」を使う。Markdownの記号（#、**、表）は使わない
+- 痛みやけがをうかがわせる内容があれば、無理をせず医師や専門家に相談するよう伝える`;
+function buildPrompt(ex){
+  const ss=dailySeries(ex, METRIC.e1rm.f, 0).slice(-30), a=analyze(ex);
+  const lw=[...bodies()].reverse().find(b=>b.weight!=null);
+  const body=[profile.height?`身長 ${profile.height}cm`:"", lw?`体重 ${lw.weight}kg（${lw.date}時点）`:""].filter(Boolean).join("、")||"未登録";
+  const q=$("#ai-q").value.trim();
+  return `種目：${ex}
+今日の日付：${todayStr()}
+体格：${body}
+
+記録（古い順・最大30日分。その日の全セット）：
+${ss.map(x=>`${x.date}：${x.sets.map(s=>`${s.w}kg×${s.r}回`).join("、")}（推定1RM ${fmt(x.v,1)}kg）`).join("\n")}
+
+アプリの自動分析：次回の目安は「${a.next}」
+${a.points.join("\n")}
+
+本人の目標・相談：${q||"（特になし）"}`;
+}
+$("#ai-ask").onclick=async()=>{
+  const ex=$("#c-ex").value, key=getKey(), out=$("#ai-out"), btn=$("#ai-ask");
+  if(!analyze(ex)){ toast("この種目の記録がありません"); return; }
+  if(!key){ toast("先にAPIキーを登録してください"); $("#ai-key").closest("details").open=true; return; }
+  if(!navigator.onLine){ toast("インターネットにつながっていません"); return; }
+  aiBusy=true; btn.disabled=true; btn.textContent="AIが考えています…"; out.textContent=""; out.classList.add("show");
+  try{
+    if(!AnthropicLib) AnthropicLib=(await import(SDK_URL)).default;
+    const client=new AnthropicLib({ apiKey:key, dangerouslyAllowBrowser:true });
+    const stream=client.beta.messages.stream({
+      model:"claude-opus-5-5", max_tokens:16000,
+      betas:["server-side-fallback-2026-07-01"], fallbacks:"default",   // 安全判定で断られたときは別モデルで自動再実行
+      output_config:{ effort:"medium" },
+      system:AI_SYSTEM,
+      messages:[{ role:"user", content:buildPrompt(ex) }]
+    });
+    stream.on("text", d=>{ out.textContent+=d; });
+    const msg=await stream.finalMessage();
+    if(msg.stop_reason==="refusal") out.textContent+=(out.textContent?"\n\n":"")+"（AIがこの相談には答えられませんでした。相談内容を変えてもう一度試してください）";
+    else if(msg.stop_reason==="max_tokens") out.textContent+="\n\n（回答が長くなったため途中で終わりました）";
+  }catch(err){
+    const A=AnthropicLib; let m;
+    if(!A) m="AIの部品を読み込めませんでした。インターネット接続を確認してください。";
+    else if(err instanceof A.AuthenticationError) m="APIキーが正しくありません。「AIの設定」で確認してください。";
+    else if(err instanceof A.PermissionDeniedError) m="このAPIキーでは利用できません（権限がありません）。";
+    else if(err instanceof A.RateLimitError) m="混み合っています。少し待ってからもう一度試してください。";
+    else if(err instanceof A.BadRequestError) m="受け付けられませんでした（残高不足の場合もあります）："+(err.message||"");
+    else if(err instanceof A.APIConnectionError) m="通信できませんでした。電波の良いところで試してください。";
+    else if(err instanceof A.APIError) m=`エラーが起きました（${err.status||"-"}）：${err.message||""}`;
+    else m="AIに相談できませんでした："+(err && err.message || err);
+    out.textContent=(out.textContent?out.textContent+"\n\n":"")+m; console.warn(err);
+  }finally{ aiBusy=false; btn.disabled=false; btn.textContent="この種目についてAIに相談"; }
+};
 function renderBody(){
   const all=bodies(), s=all.filter(b=>inRange(b.date,brange));
   const lastW=[...all].reverse().find(b=>b.weight!=null), lastF=[...all].reverse().find(b=>b.fat!=null);
   const firstW=s.find(b=>b.weight!=null), lastWin=[...s].reverse().find(b=>b.weight!=null);
-  let diff="—";
+  let diff="—"; const lastB = lastW ? bmi(lastW.weight) : null;
   if(firstW&&lastWin&&firstW!==lastWin){ const d=lastWin.weight-firstW.weight; diff=(d>0?"+":"")+fmt(d,1)+"<small>kg</small>"; }
   $("#body-stats").innerHTML=`<div class="stat"><div class="k">最新の体重</div><div class="v">${lastW?fmt(lastW.weight,1)+"<small>kg</small>":"—"}</div></div>
     <div class="stat"><div class="k">最新の体脂肪率</div><div class="v">${lastF?fmt(lastF.fat,1)+"<small>%</small>":"—"}</div></div>
-    <div class="stat"><div class="k">期間の体重変化</div><div class="v">${diff}</div></div>`;
+    <div class="stat"><div class="k">期間の体重変化</div><div class="v">${diff}</div></div>
+    <div class="stat"><div class="k">BMI${profile.height?`（身長 ${fmt(profile.height,1)}cm）`:""}</div><div class="v">${lastB?fmt(lastB,1):"—"}</div>
+      <div class="sub">${lastB?bmiLabel(lastB):(profile.height?"体重を記録すると表示":"身長を入れると表示")}</div></div>`;
   const sw=s.filter(b=>b.weight!=null), sf=s.filter(b=>b.fat!=null);
   const show=(cv,empty,arr)=>{ $(cv).parentElement.style.display=arr.length?"":"none"; $(empty).style.display=arr.length?"none":""; };
   show("#bw-chart","#bw-empty",sw); show("#bf-chart","#bf-empty",sf);
@@ -588,9 +749,9 @@ function renderBody(){
   if(sf.length) lineChart("bf",$("#bf-chart"), sf.map(b=>b.date), sf.map(b=>b.fat), "%", 1, "--series-2");
   const ids=Object.keys(state.entries);
   const el=$("#body-table");
-  el.innerHTML = all.length ? `<table><thead><tr><th>日付</th><th>体重</th><th>体脂肪率</th><th></th></tr></thead><tbody>`+
-    all.slice().reverse().map(b=>{ const id=ids.find(k=>state.entries[k]===b);
-      return `<tr><td>${shortDate(b.date)}</td><td>${b.weight!=null?fmt(b.weight,1)+" kg":"—"}</td><td>${b.fat!=null?fmt(b.fat,1)+" %":"—"}</td>
+  el.innerHTML = all.length ? `<table><thead><tr><th>日付</th><th>体重</th><th>体脂肪率</th><th>BMI</th><th></th></tr></thead><tbody>`+
+    all.slice().reverse().map(b=>{ const id=ids.find(k=>state.entries[k]===b), bm=b.weight!=null?bmi(b.weight):null;
+      return `<tr><td>${shortDate(b.date)}</td><td>${b.weight!=null?fmt(b.weight,1)+" kg":"—"}</td><td>${b.fat!=null?fmt(b.fat,1)+" %":"—"}</td><td>${bm?fmt(bm,1):"—"}</td>
       <td style="width:44px"><button class="icon" data-del="${esc(id)}" aria-label="削除">✕</button></td></tr>`; }).join("")+"</tbody></table>"
     : `<div class="empty">記録はまだありません</div>`;
   bindDeletes(el);
@@ -605,7 +766,7 @@ function backupInfo(){
   $("#backup-info").textContent=`記録 ${n}件`+(last?`・最後の書き出し：${last}`:"・まだ書き出していません");
 }
 $("#export").onclick=()=>{
-  const data=JSON.stringify({app:"gymlog",version:1,exportedAt:new Date().toISOString(),entries:state.entries},null,1);
+  const data=JSON.stringify({app:"gymlog",version:1,exportedAt:new Date().toISOString(),profile,entries:state.entries},null,1);
   const blob=new Blob([data],{type:"application/json"}), name=`gymlog-${todayStr()}.json`;
   const file=new File([blob],name,{type:"application/json"});
   const fallback=()=>{ const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),5000); };
@@ -623,14 +784,15 @@ $("#import-file").onchange=async ev=>{
     const ids=Object.keys(ent).filter(k=>ent[k] && (ent[k].kind==="workout"||ent[k].kind==="body"));
     if(!(await confirmBox(`${ids.length}件の記録を読み込みます。同じ記録は上書きされ、それ以外の今の記録はそのまま残ります。`, "読み込む", false))) return;
     ids.forEach(k=>state.entries[k]=ent[k]);
+    if(obj.profile && obj.profile.height>0){ profile.height=obj.profile.height; saveProfile(); $("#b-h").value=profile.height; }
     try{ localStorage.setItem(LS_KEY, JSON.stringify(state.entries)); }catch(e){}
     renderAll(); toast(`${ids.length}件を読み込みました`);
   }catch(e){ toast("読み込めませんでした（ファイルを確認してください）"); }
 };
 
 // ---------- init ----------
-$("#w-date").value=todayStr(); $("#b-date").value=todayStr();
-resetSets();
+$("#w-date").value=todayStr(); $("#b-date").value=todayStr(); $("#b-h").value=profile.height||"";
+resetSets(); refreshKeyUI();
 initStorage();
 if("serviceWorker" in navigator && location.protocol!=="file:"){
   window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
