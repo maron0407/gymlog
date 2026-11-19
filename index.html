@@ -366,7 +366,7 @@ function initStorage(){
 function setRow(w="",r=""){
   const div=document.createElement("div"); div.className="set";
   div.innerHTML=`<span class="no"></span>
-    <div class="unit-wrap"><input type="number" inputmode="decimal" step="0.25" min="0" class="sw" placeholder="0" value="${esc(w)}"><span>kg</span></div>
+    <div class="unit-wrap"><input type="number" inputmode="decimal" step="0.25" min="0" class="sw" placeholder="自重" value="${esc(w)}"><span>kg</span></div>
     <div class="unit-wrap"><input type="number" inputmode="numeric" step="1" min="1" class="sr" placeholder="0" value="${esc(r)}"><span>回</span></div>
     <button type="button" class="icon" aria-label="このセットを削除">✕</button>`;
   div.querySelector("button").onclick=()=>{ div.remove(); numberSets(); };
@@ -374,7 +374,9 @@ function setRow(w="",r=""){
 }
 function numberSets(){ document.querySelectorAll("#sets .set .no").forEach((n,i)=>n.textContent=(i+1)); }
 function readSets(){
-  return [...document.querySelectorAll("#sets .set")].map(s=>({ w: parseFloat(s.querySelector(".sw").value), r: parseInt(s.querySelector(".sr").value,10) }))
+  // 重量が空欄のセットは自重（0kg）として扱う
+  return [...document.querySelectorAll("#sets .set")].map(s=>{ const wv=s.querySelector(".sw").value.trim();
+      return { w: wv===""?0:parseFloat(wv), r: parseInt(s.querySelector(".sr").value,10) }; })
     .filter(s=>!isNaN(s.r) && s.r>0 && !isNaN(s.w) && s.w>=0);
 }
 function resetSets(){ $("#sets").innerHTML=""; setRow(); }
@@ -385,7 +387,7 @@ $("#add-set").onclick=()=>{
 };
 $("#q-apply").onclick=()=>{
   const w=$("#q-w").value, r=$("#q-r").value, n=parseInt($("#q-s").value,10);
-  if(w===""||r===""||!(n>0)){ toast("重量・回数・セット数を入力してください"); return; }
+  if(r===""||!(n>0)){ toast("回数とセット数を入力してください（重量は自重なら空欄でOK）"); return; }
   $("#sets").innerHTML=""; for(let i=0;i<Math.min(n,30);i++) setRow(w,r);
 };
 $("#w-ex").addEventListener("input", ()=>{ showLastHint(); renderChips(); });
@@ -423,13 +425,13 @@ function summarizeSets(sets){
   // group consecutive identical sets: 60kg×10回×3
   const out=[]; let i=0;
   while(i<sets.length){ let j=i; while(j+1<sets.length && sets[j+1].w===sets[i].w && sets[j+1].r===sets[i].r) j++;
-    const n=j-i+1; out.push(`${fmt(sets[i].w,2)}kg×${sets[i].r}回`+(n>1?`×${n}`:"")); i=j+1; }
+    const n=j-i+1; out.push(`${sets[i].w===0?"自重":fmt(sets[i].w,2)+"kg"}×${sets[i].r}回`+(n>1?`×${n}`:"")); i=j+1; }
   return out.join(" / ");
 }
 $("#save-workout").onclick=async()=>{
   const ex=$("#w-ex").value.trim(), date=$("#w-date").value||todayStr(), sets=readSets();
   if(!ex){ toast("種目を入力してください"); $("#w-ex").focus(); return; }
-  if(!sets.length){ toast("重量と回数を入力してください"); return; }
+  if(!sets.length){ toast("回数を入力してください（重量は自重なら空欄でOK）"); return; }
   const editing=editingId, old=editing?state.entries[editing]:null;
   if(editing && !old){ endEdit(); toast("修正中の記録が見つかりません"); return; }
   const prevBest = bestOf(ex, editing);
@@ -449,7 +451,7 @@ function startEdit(id){
   const w=state.entries[id]; if(!w || w.kind!=="workout") return;
   editingId=id;
   setDate("w-date", w.date); $("#w-ex").value=w.exercise; $("#w-memo").value=w.memo||"";
-  $("#sets").innerHTML=""; w.sets.forEach(s=>setRow(String(s.w),String(s.r)));
+  $("#sets").innerHTML=""; w.sets.forEach(s=>setRow(s.w===0?"":String(s.w),String(s.r)));
   if(!w.sets.length) setRow();
   $("#log-title").textContent="記録を修正";
   $("#save-workout").textContent="変更を保存";
@@ -519,7 +521,7 @@ function entryHTML(id,w,prFlag){
   const vol=w.sets.reduce((a,s)=>a+s.w*s.r,0);
   return `<div class="entry${id===editingId?" editing":""}"><div><div class="name">${esc(w.exercise)}${prFlag?'<span class="badge">PR</span>':""}${id===editingId?'<span class="badge" style="color:var(--accent);border-color:var(--accent)">修正中</span>':""}</div>
     <div class="detail">${esc(summarizeSets(w.sets))}</div>
-    <div class="detail">${w.sets.length}セット・総ボリューム ${fmt(vol,0)}kg</div>
+    <div class="detail">${w.sets.length}セット・${vol>0?`総ボリューム ${fmt(vol,0)}kg`:`合計 ${w.sets.reduce((a,s)=>a+s.r,0)}回`}</div>
     ${w.memo?`<div class="memo">${esc(w.memo)}</div>`:""}</div>
     <div class="actions"><button class="icon edit" data-edit="${esc(id)}" aria-label="修正"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/></svg></button>
     <button class="icon" data-del="${esc(id)}" aria-label="削除">✕</button></div></div>`;
@@ -636,8 +638,12 @@ function renderExChart(){
   if(all.length){
     const best=Math.max(...all.map(x=>x.v));
     const best1=Math.max(...dailySeries(ex,METRIC.e1rm.f,0).map(x=>x.v));
-    st.innerHTML=`<div class="stat"><div class="k">自己ベスト</div><div class="v">${fmt(best,2)}<small>kg</small></div></div>
-      <div class="stat"><div class="k">推定1RM</div><div class="v">${fmt(best1,1)}<small>kg</small></div></div>
+    const bestR=Math.max(...dailySeries(ex,METRIC.reps.f,0).map(x=>x.v));
+    st.innerHTML=(best===0
+      ? `<div class="stat"><div class="k">自己ベスト（自重）</div><div class="v">${bestR}<small>回</small></div></div>
+      <div class="stat"><div class="k">推定1RM</div><div class="v">—</div></div>`
+      : `<div class="stat"><div class="k">自己ベスト</div><div class="v">${fmt(best,2)}<small>kg</small></div></div>
+      <div class="stat"><div class="k">推定1RM</div><div class="v">${fmt(best1,1)}<small>kg</small></div></div>`)+`
       <div class="stat"><div class="k">実施日数</div><div class="v">${all.length}<small>日</small></div></div>`;
   } else st.innerHTML="";
   const has=s.length>0;
