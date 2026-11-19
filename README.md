@@ -8,7 +8,7 @@
 index.html             アプリ本体
 manifest.webmanifest   アプリ名・アイコンの設定
 sw.js                  オフライン対応（Service Worker）
-icons/                 アイコン画像
+*.png                  アイコン画像（icon-192 / icon-512 / icon-maskable-512 / apple-touch-icon）
 ```
 
 ## 1. GitHub Pages で公開する（無料・約10分）
@@ -18,7 +18,7 @@ icons/                 アイコン画像
    - Repository name：`gymlog` など好きな名前
    - **Public** を選択 → 「Create repository」
 3. 作成後の画面で「uploading an existing file」をクリック
-4. zip を解凍したフォルダの**中身**（index.html、manifest.webmanifest、sw.js、icons フォルダ）をまとめてドラッグ＆ドロップ → 「Commit changes」
+4. zip を解凍したフォルダの**中身**（index.html、manifest.webmanifest、sw.js、アイコン画像4つ、README.md）をまとめてドラッグ＆ドロップ → 「Commit changes」
 5. リポジトリの「Settings」→ 左メニュー「Pages」
    - Source：「Deploy from a branch」
    - Branch：`main` / `/(root)` → 「Save」
