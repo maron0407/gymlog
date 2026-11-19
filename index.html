@@ -280,7 +280,8 @@ const jpDate = s => { const [y,m,d]=s.split("-").map(Number); const wd="日月�
 const shortDate = s => { const [,m,d]=s.split("-").map(Number); return `${m}/${d}`; };
 function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(toast._t); toast._t=setTimeout(()=>t.classList.remove("show"),1800); }
 function esc(s){ return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
-function confirmBox(msg){ return new Promise(res=>{ $("#modal-msg").textContent=msg; $("#modal").classList.add("show");
+function confirmBox(msg, okLabel="削除", danger=true){ return new Promise(res=>{ $("#modal-msg").textContent=msg; $("#modal").classList.add("show");
+  const ok=$("#modal-ok"); ok.textContent=okLabel; ok.className=danger?"danger":"primary";
   const done=v=>{ $("#modal").classList.remove("show"); $("#modal-ok").onclick=$("#modal-cancel").onclick=null; res(v); };
   $("#modal-ok").onclick=()=>done(true); $("#modal-cancel").onclick=()=>done(false); }); }
 const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -583,7 +584,7 @@ $("#import-file").onchange=async ev=>{
     const obj=JSON.parse(await f.text()); const ent=obj && obj.entries;
     if(!ent || typeof ent!=="object") throw new Error("bad");
     const ids=Object.keys(ent).filter(k=>ent[k] && (ent[k].kind==="workout"||ent[k].kind==="body"));
-    if(!(await confirmBox(`${ids.length}件の記録を読み込みます。同じ記録は上書きされ、それ以外の今の記録はそのまま残ります。`))) return;
+    if(!(await confirmBox(`${ids.length}件の記録を読み込みます。同じ記録は上書きされ、それ以外の今の記録はそのまま残ります。`, "読み込む", false))) return;
     ids.forEach(k=>state.entries[k]=ent[k]);
     try{ localStorage.setItem(LS_KEY, JSON.stringify(state.entries)); }catch(e){}
     renderAll(); toast(`${ids.length}件を読み込みました`);
