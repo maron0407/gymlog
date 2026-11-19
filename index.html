@@ -98,6 +98,10 @@ nav.tabs button[aria-selected="true"]{color:var(--accent);font-weight:700}
 .entry .name{font-weight:700}
 .entry .detail{font-size:13px;color:var(--text2);font-variant-numeric:tabular-nums}
 .entry .memo{font-size:12px;color:var(--muted)}
+.entry .actions{display:flex;flex-shrink:0}
+.entry.editing{background:var(--bg);border-radius:10px;padding-left:8px;padding-right:8px}
+button.icon.edit:hover{color:var(--accent)}
+button.icon svg{width:18px;height:18px}
 .badge{display:inline-block;font-size:11px;font-weight:700;color:var(--pr);border:1px solid var(--pr);border-radius:6px;padding:0 5px;margin-left:6px;vertical-align:1px}
 table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
 th,td{padding:6px 4px;border-bottom:1px solid var(--border);text-align:right}
@@ -126,7 +130,7 @@ button.danger{background:var(--danger);border-color:var(--danger);color:#fff;fon
   <!-- 記録 -->
   <section class="view active" id="view-log">
     <div class="card">
-      <h2>トレーニングを記録</h2>
+      <h2 id="log-title">トレーニングを記録</h2>
       <div class="row">
         <div class="field"><label for="w-date">日付</label><input type="date" id="w-date"></div>
       </div>
@@ -152,6 +156,7 @@ button.danger{background:var(--danger);border-color:var(--danger);color:#fff;fon
       </div>
       <div class="field"><label for="w-memo">メモ（任意）</label><input id="w-memo" placeholder="フォーム、調子など"></div>
       <button class="primary" id="save-workout">保存する</button>
+      <button type="button" id="cancel-edit" style="display:none;width:100%;margin-top:8px">修正をやめる</button>
     </div>
 
     <div class="card">
@@ -339,7 +344,8 @@ $("#q-apply").onclick=()=>{
 $("#w-ex").addEventListener("input", showLastHint);
 function showLastHint(){
   const name=$("#w-ex").value.trim(); const h=$("#last-hint");
-  const prev=workouts().filter(w=>w.exercise===name).sort((a,b)=>(b.date+b.t).localeCompare(a.date+a.t))[0];
+  const prev=Object.entries(state.entries).filter(([id,e])=>e.kind==="workout"&&id!==editingId&&e.exercise===name).map(([,e])=>e)
+    .sort((a,b)=>(b.date+b.t).localeCompare(a.date+a.t))[0];
   if(!prev){ h.textContent=""; return; }
   h.textContent=`前回（${shortDate(prev.date)}）：`+summarizeSets(prev.sets);
 }
@@ -354,14 +360,42 @@ $("#save-workout").onclick=async()=>{
   const ex=$("#w-ex").value.trim(), date=$("#w-date").value||todayStr(), sets=readSets();
   if(!ex){ toast("種目を入力してください"); $("#w-ex").focus(); return; }
   if(!sets.length){ toast("重量と回数を入力してください"); return; }
-  const prevBest = bestOf(ex);
-  const id=uid();
-  await store.set(id,{kind:"workout",date,exercise:ex,sets,memo:$("#w-memo").value.trim(),t:Date.now()});
+  const editing=editingId, old=editing?state.entries[editing]:null;
+  if(editing && !old){ endEdit(); toast("修正中の記録が見つかりません"); return; }
+  const prevBest = bestOf(ex, editing);
+  const id=editing||uid();
+  await store.set(id,{kind:"workout",date,exercise:ex,sets,memo:$("#w-memo").value.trim(),t:old?old.t:Date.now()});
+  if(editing){ endEdit(); toast("変更を保存しました"); return; }
   const mx=Math.max(...sets.map(s=>s.w));
   toast(prevBest!==null && mx>prevBest ? `🎉 自己ベスト更新！ ${fmt(mx,2)}kg` : "保存しました");
   resetSets(); $("#w-memo").value=""; showLastHint();
 };
-function bestOf(ex){ const ws=workouts().filter(w=>w.exercise===ex); if(!ws.length) return null; return Math.max(...ws.flatMap(w=>w.sets.map(s=>s.w))); }
+function bestOf(ex, exceptId){ const ws=Object.entries(state.entries).filter(([id,e])=>e.kind==="workout"&&id!==exceptId&&e.exercise===ex).map(([,e])=>e);
+  if(!ws.length) return null; return Math.max(...ws.flatMap(w=>w.sets.map(s=>s.w))); }
+
+// ---------- edit ----------
+let editingId=null;
+function startEdit(id){
+  const w=state.entries[id]; if(!w || w.kind!=="workout") return;
+  editingId=id;
+  $("#w-date").value=w.date; $("#w-ex").value=w.exercise; $("#w-memo").value=w.memo||"";
+  $("#sets").innerHTML=""; w.sets.forEach(s=>setRow(String(s.w),String(s.r)));
+  if(!w.sets.length) setRow();
+  $("#log-title").textContent="記録を修正";
+  $("#save-workout").textContent="変更を保存";
+  $("#cancel-edit").style.display="";
+  showView("log");
+  toast("内容を直して「変更を保存」を押してください");
+}
+function endEdit(){
+  editingId=null;
+  $("#log-title").textContent="トレーニングを記録";
+  $("#save-workout").textContent="保存する";
+  $("#cancel-edit").style.display="none";
+  $("#w-date").value=todayStr(); $("#w-ex").value=""; $("#w-memo").value="";
+  resetSets(); renderAll();
+}
+$("#cancel-edit").onclick=()=>{ endEdit(); toast("修正をやめました"); };
 
 // ---------- body ----------
 $("#save-body").onclick=async()=>{
@@ -377,11 +411,12 @@ $("#save-body").onclick=async()=>{
 };
 
 // ---------- tabs & segmented ----------
-document.querySelectorAll("nav.tabs button").forEach(b=>b.onclick=()=>{
-  document.querySelectorAll("nav.tabs button").forEach(x=>x.setAttribute("aria-selected", x===b));
-  document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active", v.id==="view-"+b.dataset.view));
+function showView(name){
+  document.querySelectorAll("nav.tabs button").forEach(x=>x.setAttribute("aria-selected", x.dataset.view===name));
+  document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active", v.id==="view-"+name));
   renderAll(); window.scrollTo(0,0);
-});
+}
+document.querySelectorAll("nav.tabs button").forEach(b=>b.onclick=()=>showView(b.dataset.view));
 function seg(sel,cb){ document.querySelectorAll(sel+" button").forEach(b=>b.onclick=()=>{
   document.querySelectorAll(sel+" button").forEach(x=>x.setAttribute("aria-pressed",x===b)); cb(b); }); }
 seg("#metric-seg",b=>{ metric=b.dataset.m; renderExChart(); });
@@ -406,11 +441,12 @@ function renderAll(){
 let rzT; window.addEventListener("resize",()=>{ clearTimeout(rzT); rzT=setTimeout(renderAll,150); });
 function entryHTML(id,w,prFlag){
   const vol=w.sets.reduce((a,s)=>a+s.w*s.r,0);
-  return `<div class="entry"><div><div class="name">${esc(w.exercise)}${prFlag?'<span class="badge">PR</span>':""}</div>
+  return `<div class="entry${id===editingId?" editing":""}"><div><div class="name">${esc(w.exercise)}${prFlag?'<span class="badge">PR</span>':""}${id===editingId?'<span class="badge" style="color:var(--accent);border-color:var(--accent)">修正中</span>':""}</div>
     <div class="detail">${esc(summarizeSets(w.sets))}</div>
     <div class="detail">${w.sets.length}セット・総ボリューム ${fmt(vol,0)}kg</div>
     ${w.memo?`<div class="memo">${esc(w.memo)}</div>`:""}</div>
-    <button class="icon" data-del="${esc(id)}" aria-label="削除">✕</button></div>`;
+    <div class="actions"><button class="icon edit" data-edit="${esc(id)}" aria-label="修正"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/></svg></button>
+    <button class="icon" data-del="${esc(id)}" aria-label="削除">✕</button></div></div>`;
 }
 function prSet(){
   // ids of workouts that set a new max weight for their exercise (chronologically)
@@ -421,7 +457,8 @@ function prSet(){
 }
 function bindDeletes(root){
   root.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{
-    if(await confirmBox("この記録を削除しますか？")){ await store.del(b.dataset.del); toast("削除しました"); } });
+    if(await confirmBox("この記録を削除しますか？")){ const id=b.dataset.del; await store.del(id); if(id===editingId) endEdit(); toast("削除しました"); } });
+  root.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>startEdit(b.dataset.edit));
 }
 function renderToday(){
   const t=todayStr(), prs=prSet();
