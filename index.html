@@ -151,6 +151,19 @@ button.icon svg{width:18px;height:18px}
 .chips button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:700}
 .stat .sub{font-size:11px;color:var(--text2)}
 .set input::placeholder{font-size:13px}
+.month-head{margin:18px 0 4px;font-size:13px;font-weight:700;color:var(--text2);border-bottom:2px solid var(--border);padding-bottom:4px}
+.day-card{padding:12px 0;border-top:1px solid var(--border)}
+.month-head+.day-card{border-top:0}
+.day-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.day-head .d{font-weight:700;font-size:15px}
+.day-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.day-tags span{font-size:12px;padding:1px 9px;border-radius:10px;background:var(--bg);border:1px solid var(--border);color:var(--text2)}
+.day-stats{font-size:12px;color:var(--text2);margin-top:6px;font-variant-numeric:tabular-nums}
+.day-list{list-style:none;margin:6px 0 0;padding:0}
+.day-list li{font-size:13px;padding:3px 0;font-variant-numeric:tabular-nums}
+.day-list li b{margin-right:6px}
+.day-list li span{color:var(--text2)}
+.day-open{min-height:36px;font-size:13px;padding:0 12px;margin-top:8px}
 .next .row2{font-size:13px;color:var(--text2);margin-top:2px}
 .part-pick{display:flex;align-items:center;gap:8px;margin-top:10px}
 .part-pick label{margin:0;flex:1}
@@ -238,7 +251,7 @@ button.danger{background:var(--danger);border-color:var(--danger);color:#fff;fon
     </div>
 
     <div class="card">
-      <h2>今日の記録</h2>
+      <h2 id="today-title">今日の記録</h2>
       <div id="today-list"></div>
     </div>
 
@@ -352,6 +365,10 @@ button.danger{background:var(--danger);border-color:var(--danger);color:#fff;fon
   <section class="view" id="view-hist">
     <div class="card">
       <h2>履歴</h2>
+      <div class="seg" role="group" aria-label="表示の仕方" id="hist-mode">
+        <button aria-pressed="true" data-mode="day">日ごとにまとめる</button>
+        <button aria-pressed="false" data-mode="entry">1件ずつ（修正・削除）</button>
+      </div>
       <div class="field">
         <label for="h-ex">種目で絞り込み</label>
         <select id="h-ex"></select>
@@ -720,14 +737,50 @@ function bindDeletes(root){
   root.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>startEdit(b.dataset.edit));
 }
 function renderToday(){
-  const t=todayStr(), prs=prSet();
+  // 記録タブで選んでいる日付の記録を表示（今日以外の日も見られる）
+  const t=$("#w-date").value||todayStr(), prs=prSet(), isToday=t===todayStr();
+  $("#today-title").textContent=isToday?"今日の記録":`${jpDate(t)}の記録`;
   const list=Object.entries(state.entries).filter(([,e])=>e.kind==="workout"&&e.date===t).sort((a,b)=>a[1].t-b[1].t);
   const el=$("#today-list");
-  el.innerHTML = list.length ? list.map(([id,w])=>entryHTML(id,w,prs.has(id))).join("") : `<div class="empty">今日の記録はまだありません</div>`;
+  el.innerHTML = list.length ? list.map(([id,w])=>entryHTML(id,w,prs.has(id))).join("") : `<div class="empty">${isToday?"今日":"この日"}の記録はまだありません</div>`;
   bindDeletes(el);
 }
+let histMode="day";
+document.querySelectorAll("#hist-mode button").forEach(b=>b.onclick=()=>{
+  histMode=b.dataset.mode; document.querySelectorAll("#hist-mode button").forEach(x=>x.setAttribute("aria-pressed",x===b)); renderHistory(); });
+// 日ごとのまとめ：その日の部位・種目数・セット数・総ボリューム・体重・AI評価と、種目ごとのセット
+function renderDays(f){
+  const prs=prSet(), byDay={};
+  Object.entries(state.entries).filter(([,e])=>e.kind==="workout").forEach(([id,w])=>(byDay[w.date]=byDay[w.date]||[]).push([id,w]));
+  const dates=Object.keys(byDay).filter(d=>!f||byDay[d].some(([,w])=>w.exercise===f)).sort().reverse();
+  const el=$("#hist-list");
+  if(!dates.length){ el.innerHTML=`<div class="empty">記録はまだありません</div>`; return; }
+  const evs=loadEvals(), bodyBy={}; bodies().forEach(b=>bodyBy[b.date]=b);
+  const partOrder=[...Object.keys(PARTS),"その他"];
+  const monthCount={}; dates.forEach(d=>{ const m=d.slice(0,7); monthCount[m]=(monthCount[m]||0)+1; });
+  let html="", month="";
+  dates.forEach(d=>{
+    const m=d.slice(0,7);
+    if(m!==month){ month=m; const [y,mm]=m.split("-").map(Number); html+=`<div class="month-head">${y}年${mm}月（${monthCount[m]}日）</div>`; }
+    const list=byDay[d].sort((a,b)=>a[1].t-b[1].t), ex={};
+    list.forEach(([id,w])=>{ const x=ex[w.exercise]=ex[w.exercise]||{sets:[],pr:false}; x.sets.push(...w.sets); if(prs.has(id)) x.pr=true; });
+    const names=Object.keys(ex), sets=list.flatMap(([,w])=>w.sets);
+    const vol=sets.reduce((a,s)=>a+s.w*s.r,0);
+    const parts=[...new Set(names.map(n=>partOf(n)||"その他"))].sort((a,b)=>partOrder.indexOf(a)-partOrder.indexOf(b));
+    const ev=evs[d], g=ev&&ev.result&&GRADES.includes(ev.result.overall_grade)?ev.result.overall_grade:null, b=bodyBy[d];
+    html+=`<div class="day-card"><div class="day-head"><span class="d">${jpDate(d)}</span>${g?`<span class="grade sm g-${g}" title="AI評価">${g}</span>`:""}</div>
+      <div class="day-tags">${parts.map(p=>`<span>${esc(p)}</span>`).join("")}</div>
+      <div class="day-stats">${names.length}種目・${sets.length}セット${vol>0?`・総ボリューム ${fmt(vol,0)}kg`:""}${b&&b.weight!=null?`・体重 ${fmt(b.weight,1)}kg`:""}</div>
+      <ul class="day-list">${names.map(n=>`<li><b>${esc(n)}</b>${ex[n].pr?'<span class="badge">PR</span> ':""}<span>${esc(summarizeSets(ex[n].sets))}</span></li>`).join("")}</ul>
+      <button type="button" class="day-open" data-open="${d}">記録タブでこの日を開く</button></div>`;
+  });
+  el.innerHTML=html;
+  el.querySelectorAll("[data-open]").forEach(btn=>btn.onclick=()=>{ if(editingId) endEdit(); setDate("w-date", btn.dataset.open); showView("log"); toast(`${shortDate(btn.dataset.open)}の記録を開きました`); });
+}
 function renderHistory(){
-  const f=$("#h-ex").value, prs=prSet();
+  const f=$("#h-ex").value;
+  if(histMode==="day"){ renderDays(f); return; }
+  const prs=prSet();
   const list=Object.entries(state.entries).filter(([,e])=>e.kind==="workout"&&(!f||e.exercise===f))
     .sort((a,b)=>(b[1].date+String(b[1].t)).localeCompare(a[1].date+String(a[1].t)));
   const el=$("#hist-list");
@@ -1208,7 +1261,7 @@ renderRestPresets(); renderTimer();
 
 // ---------- init ----------
 $("#w-date").value=todayStr(); $("#b-date").value=todayStr(); $("#b-h").value=profile.height||"";
-setupDate("w-date", ()=>{ renderEval(); showLastHint(); }); setupDate("b-date");
+setupDate("w-date", ()=>{ renderToday(); renderEval(); showLastHint(); }); setupDate("b-date");
 resetSets(); refreshKeyUI();
 initStorage();
 if("serviceWorker" in navigator && location.protocol!=="file:"){
