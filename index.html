@@ -82,6 +82,22 @@ body.timer-on .toast{bottom:calc(170px + env(safe-area-inset-bottom))}
 .rest-in b{font-size:28px;line-height:1.1;font-variant-numeric:tabular-nums}
 .rest-in button{padding:0 10px;font-size:14px}
 .rest-bar.ending b{color:var(--series-2)}
+.grade{display:inline-flex;align-items:center;justify-content:center;width:52px;height:52px;border-radius:12px;font-size:28px;font-weight:800;color:#fff;flex-shrink:0}
+.grade.sm{width:34px;height:34px;font-size:18px;border-radius:8px}
+.g-S{background:var(--pr)}.g-A{background:var(--accent)}.g-B{background:#6f6e69}.g-C{background:var(--series-2)}.g-D{background:var(--danger)}
+.ev-head{display:flex;gap:12px;align-items:center;background:var(--bg);border-radius:10px;padding:12px;margin-top:12px}
+.ev-head .k{font-size:12px;color:var(--text2)}
+.ev-out h3{font-size:15px;margin:16px 0 4px}
+.ev-out ul{margin:0;padding-left:20px}.ev-out li{margin:4px 0;font-size:14px}
+.ev-ex{display:flex;gap:10px;padding:10px 0;border-top:1px solid var(--border)}
+.ev-ex:first-of-type{border-top:0}
+.ev-ex .name{font-weight:700}
+.ev-ex .detail{font-size:13px;color:var(--text2);margin-top:2px}
+.ev-ex .detail b{color:var(--text)}
+.caution{border:1px solid var(--danger);color:var(--danger);border-radius:10px;padding:10px 12px;font-size:13px;margin-top:12px}
+.legend{font-size:13px;margin:6px 0 0;padding:0;list-style:none}
+.legend li{display:flex;gap:8px;align-items:center;margin:6px 0}
+.legend .grade.sm{width:26px;height:26px;font-size:14px;border-radius:6px}
 .unit-wrap{position:relative}
 .unit-wrap input{padding-right:40px}
 .unit-wrap span{position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:13px;color:var(--muted);pointer-events:none}
@@ -209,6 +225,31 @@ button.danger{background:var(--danger);border-color:var(--danger);color:#fff;fon
     <div class="card">
       <h2>今日の記録</h2>
       <div id="today-list"></div>
+    </div>
+
+    <div class="card ev-card">
+      <h2>AIトレーニング評価</h2>
+      <div class="hint" id="ev-title" style="margin:-6px 0 10px"></div>
+      <label>目的</label>
+      <div class="seg" role="group" aria-label="目的" id="ev-goal">
+        <button aria-pressed="true" data-goal="増強">筋肉増強</button>
+        <button aria-pressed="false" data-goal="維持">筋力維持</button>
+      </div>
+      <div class="field"><label for="ev-q">体調・相談（任意）</label>
+        <input id="ev-q" placeholder="例：寝不足だった、肩に少し違和感"></div>
+      <button class="primary" id="ev-ask">AIで評価する</button>
+      <div class="hint" id="ev-note"></div>
+      <div class="ev-out" id="ev-out" aria-live="polite"></div>
+      <details><summary>評価の基準（S〜D）</summary>
+        <ul class="legend">
+          <li><span class="grade sm g-S">S</span>自己ベスト更新など、目的に対して理想的な内容</li>
+          <li><span class="grade sm g-A">A</span>前回以上で、目的に合った十分な内容</li>
+          <li><span class="grade sm g-B">B</span>前回並み。目的は満たすが伸びしろあり</li>
+          <li><span class="grade sm g-C">C</span>前回を下回る、または量・強度が目的に対して不足</li>
+          <li><span class="grade sm g-D">D</span>大きく不足。メニューの見直しが必要</li>
+        </ul>
+        <p class="hint">記録タブの日付で選んだ日を評価します。評価のたびに、その日と前回までの記録・体重・身長・目的・相談内容がAnthropic（Claudeの会社）に送られます（1回10円前後）。APIキーはグラフタブの「AIの設定」で登録します。</p>
+      </details>
     </div>
   </section>
 
@@ -452,9 +493,9 @@ $("#q-apply").onclick=()=>{
 $("#w-ex").addEventListener("input", ()=>{ showLastHint(); renderChips(); });
 
 // ---------- 日付（‹ › で1日ずつ動かせる・どこを押してもカレンダーが開く） ----------
-function setupDate(id){
+function setupDate(id,onChange){
   const inp=$("#"+id), wrap=inp.parentElement, sub=wrap.nextElementSibling, next=wrap.querySelector(".dn-next");
-  const upd=()=>{ const v=inp.value; next.disabled = !v || v>=todayStr();
+  const upd=()=>{ const v=inp.value; next.disabled = !v || v>=todayStr(); if(onChange) onChange();
     if(!v){ sub.textContent=""; return; }
     const diff=Math.round(dayNum(todayStr())-dayNum(v));
     sub.textContent=jpDate(v)+(diff===0?"・今日":diff===1?"・昨日":diff>1?`・${diff}日前`:"・未来の日付"); };
@@ -581,7 +622,7 @@ function renderAll(){
     if([...sel.options].some(o=>o.value===cur)) sel.value=cur; };
   fillSel($("#c-ex"), used.length?used:["（記録なし）"], false);
   fillSel($("#h-ex"), used, true);
-  renderToday(); showLastHint();
+  renderToday(); showLastHint(); renderEval();
   if($("#view-chart").classList.contains("active")) renderExChart();
   if($("#view-body").classList.contains("active")) renderBody();
   if($("#view-hist").classList.contains("active")){ renderHistory(); backupInfo(); }
@@ -830,17 +871,147 @@ $("#ai-ask").onclick=async()=>{
     if(msg.stop_reason==="refusal") out.textContent+=(out.textContent?"\n\n":"")+"（AIがこの相談には答えられませんでした。相談内容を変えてもう一度試してください）";
     else if(msg.stop_reason==="max_tokens") out.textContent+="\n\n（回答が長くなったため途中で終わりました）";
   }catch(err){
-    const A=AnthropicLib; let m;
-    if(!A) m="AIの部品を読み込めませんでした。インターネット接続を確認してください。";
-    else if(err instanceof A.AuthenticationError) m="APIキーが正しくありません。「AIの設定」で確認してください。";
-    else if(err instanceof A.PermissionDeniedError) m="このAPIキーでは利用できません（権限がありません）。";
-    else if(err instanceof A.RateLimitError) m="混み合っています。少し待ってからもう一度試してください。";
-    else if(err instanceof A.BadRequestError) m="受け付けられませんでした（残高不足の場合もあります）："+(err.message||"");
-    else if(err instanceof A.APIConnectionError) m="通信できませんでした。電波の良いところで試してください。";
-    else if(err instanceof A.APIError) m=`エラーが起きました（${err.status||"-"}）：${err.message||""}`;
-    else m="AIに相談できませんでした："+(err && err.message || err);
-    out.textContent=(out.textContent?out.textContent+"\n\n":"")+m; console.warn(err);
+    out.textContent=(out.textContent?out.textContent+"\n\n":"")+aiErrMsg(err); console.warn(err);
   }finally{ aiBusy=false; btn.disabled=false; btn.textContent="この種目についてAIに相談"; }
+};
+function aiErrMsg(err){
+  const A=AnthropicLib;
+  if(!A) return "AIの部品を読み込めませんでした。インターネット接続を確認してください。";
+  if(err instanceof A.AuthenticationError) return "APIキーが正しくありません。グラフタブの「AIの設定」で確認してください。";
+  if(err instanceof A.PermissionDeniedError) return "このAPIキーでは利用できません（権限がありません）。";
+  if(err instanceof A.RateLimitError) return "混み合っています。少し待ってからもう一度試してください。";
+  if(err instanceof A.BadRequestError) return "受け付けられませんでした（残高不足の場合もあります）："+(err.message||"");
+  if(err instanceof A.APIConnectionError) return "通信できませんでした。電波の良いところで試してください。";
+  if(err instanceof A.APIError) return `エラーが起きました（${err.status||"-"}）：${err.message||""}`;
+  return "AIに相談できませんでした："+(err && err.message || err);
+}
+
+// ---------- AIトレーニング評価（その日の全種目を S〜D で評価し、目的に合わせてコーチング） ----------
+const EVAL_KEY="gymlog.evals", GRADES=["S","A","B","C","D"];
+const GOAL_LABEL={"増強":"筋肉増強","維持":"筋力維持"};
+let evBusy=false;
+const goal=()=>profile.goal==="維持"?"維持":"増強";
+function loadEvals(){ try{ return JSON.parse(localStorage.getItem(EVAL_KEY)||"{}")||{}; }catch(e){ return {}; } }
+function saveEval(date,obj){ const all=loadEvals(); all[date]=obj; try{ localStorage.setItem(EVAL_KEY,JSON.stringify(all)); }catch(e){} }
+const dayList=date=>workouts().filter(w=>w.date===date).sort((a,b)=>a.t-b.t);
+const daySig=list=>JSON.stringify(list.map(w=>[w.exercise,w.sets]));   // 評価のあとで記録が変わったか調べる用
+document.querySelectorAll("#ev-goal button").forEach(b=>b.onclick=()=>{ profile.goal=b.dataset.goal; saveProfile(); renderEval(); });
+
+const EVAL_SYSTEM=`あなたは筋力トレーニングのコーチです。ユーザーの1日分のトレーニング記録を、ユーザーが選んだ目的（筋肉増強 または 筋力維持）に照らして評価し、コーチングします。
+
+評価は S・A・B・C・D の5段階です。
+S：自己ベスト更新など、目的に対して理想的な内容
+A：前回以上で、目的に合った十分な内容
+B：前回並み。目的は満たすが伸びしろがある
+C：前回を下回る、または量・強度が目的に対して不足
+D：大きく不足していて、メニューの見直しが必要
+
+目的ごとの考え方：
+・筋肉増強：1種目3セット以上、6〜12回を限界近くまで行い、前回より重量か回数を少しずつ伸ばすこと（漸進性過負荷）を重視する。部位ごとに週10セット前後が目安
+・筋力維持：重量（強度）を落とさないことを最優先にする。量は減らしてよく、部位ごとに週3〜6セット、週1〜2回が目安。前回と同じ重量を扱えていれば十分に良い評価になる
+
+書き方：
+・種目ごとに評価する。前回の記録がない種目は「初回」として、内容が目的に合っているかで評価する
+・good には良かった点を、improve には「ひとつ上の評価にするには何をすればよいか」を具体的な数字で書く（例：次回は62.5kg×8回×3セット）。S の種目は、次にどう伸ばすかを書く
+・overall_comment は1日全体の評価を2〜3文で
+・coaching は目的に向けた今後1〜2週間の進め方を3〜5個。頻度、部位のバランス、休養、食事・睡眠にも必要なら触れる
+・next_menu は次回のメニュー案を「種目 重量×回数×セット」の形で1〜4行（改行で区切る）
+・日本語で、スマホで読むので各項目は短く（1〜3文）。Markdownの記号は使わない
+・メモや相談に痛み・けがをうかがわせる内容があれば、caution に無理をせず医師や専門家に相談するよう書く。なければ空文字にする`;
+const EVAL_SCHEMA={ type:"object", additionalProperties:false,
+  required:["overall_grade","overall_comment","exercises","coaching","next_menu","caution"],
+  properties:{
+    overall_grade:{type:"string",enum:GRADES},
+    overall_comment:{type:"string"},
+    exercises:{type:"array",items:{type:"object",additionalProperties:false,required:["name","grade","good","improve"],
+      properties:{name:{type:"string"},grade:{type:"string",enum:GRADES},good:{type:"string"},improve:{type:"string"}}}},
+    coaching:{type:"array",items:{type:"string"}},
+    next_menu:{type:"string"},
+    caution:{type:"string"}
+  }};
+function buildEvalPrompt(date){
+  const list=dayList(date), setsTxt=sets=>sets.map(s=>`${s.w===0?"自重":s.w+"kg"}×${s.r}回`).join("、");
+  const lw=[...bodies()].reverse().find(b=>b.weight!=null && b.date<=date);
+  const body=[profile.height?`身長 ${profile.height}cm`:"", lw?`体重 ${lw.weight}kg（${lw.date}時点）`:""].filter(Boolean).join("、")||"未登録";
+  const days28=new Set(workouts().filter(w=>w.date<=date && dayNum(date)-dayNum(w.date)<28).map(w=>w.date)).size;
+  const exs=[...new Set(list.map(w=>w.exercise))];
+  const blocks=exs.map(ex=>{
+    const today=list.filter(w=>w.exercise===ex), sets=today.flatMap(w=>w.sets), memo=today.map(w=>w.memo).filter(Boolean).join(" / ");
+    const prev=dailySeries(ex, METRIC.e1rm.f, 0).filter(x=>x.date<date);
+    const best=prev.length?Math.max(...prev.map(x=>x.v)):null;
+    return `■ ${ex}（部位：${partOf(ex)||"不明"}）
+この日：${setsTxt(sets)}${memo?`（メモ：${memo}）`:""}
+これまでの記録（新しい順・最大5回）：${prev.length?prev.slice(-5).reverse().map(x=>`${x.date} ${setsTxt(x.sets)}`).join(" ／ "):"なし（初回）"}
+これまでの推定1RMの最高：${best!==null&&best>0?fmt(best,1)+"kg":"—"}`;
+  });
+  const q=$("#ev-q").value.trim();
+  return `評価する日：${date}
+目的：${GOAL_LABEL[goal()]}
+体格：${body}
+この日までの4週間のトレーニング日数：${days28}日
+
+${blocks.join("\n\n")}
+
+体調・相談：${q||"（特になし）"}`;
+}
+function evalHTML(ev, stale){
+  const r=ev.result, g=x=>GRADES.includes(x)?x:"B";
+  return `<div class="ev-head"><span class="grade g-${g(r.overall_grade)}">${g(r.overall_grade)}</span>
+      <div><div class="k">総合評価（目的：${esc(GOAL_LABEL[ev.goal]||"")}）</div><div>${esc(r.overall_comment)}</div></div></div>
+    ${r.caution?`<div class="caution">${esc(r.caution)}</div>`:""}
+    <h3>種目ごとの評価</h3>
+    ${(r.exercises||[]).map(e=>`<div class="ev-ex"><span class="grade sm g-${g(e.grade)}">${g(e.grade)}</span><div>
+      <div class="name">${esc(e.name)}</div>
+      <div class="detail"><b>良い点</b>　${esc(e.good)}</div>
+      <div class="detail"><b>改善点</b>　${esc(e.improve)}</div></div></div>`).join("")}
+    <h3>コーチング</h3>
+    <ul>${(r.coaching||[]).map(c=>`<li>${esc(c)}</li>`).join("")}</ul>
+    ${r.next_menu?`<div class="next" style="margin-top:12px"><div class="k">次回のメニュー案</div><div style="white-space:pre-wrap;font-weight:700">${esc(r.next_menu)}</div></div>`:""}
+    <div class="hint">${stale?"⚠ 評価したあとに記録が変わっています。もう一度評価すると最新の内容で評価します。<br>":""}評価日時：${esc(new Date(ev.at).toLocaleString("ja-JP"))}・AIによる目安です。体調に合わせて調整してください。</div>`;
+}
+function renderEval(){
+  const date=$("#w-date").value||todayStr(), list=dayList(date), ev=loadEvals()[date];
+  $("#ev-title").textContent=jpDate(date)+"のトレーニングを評価します（記録の日付を変えると別の日も評価できます）";
+  document.querySelectorAll("#ev-goal button").forEach(b=>b.setAttribute("aria-pressed", b.dataset.goal===goal()));
+  const btn=$("#ev-ask");
+  if(evBusy) return;   // 評価中は表示を書き換えない
+  btn.disabled=!list.length;
+  btn.textContent=ev?"もう一度評価する":"AIで評価する";
+  $("#ev-note").textContent=!list.length?"この日の記録はまだありません。記録を保存すると評価できます。"
+    : getKey()?"" : "AIで評価するには、グラフタブの「AIの設定」でAPIキーを登録してください。";
+  $("#ev-out").innerHTML=ev && list.length?evalHTML(ev, ev.sig!==daySig(list)):"";
+}
+$("#ev-ask").onclick=async()=>{
+  const date=$("#w-date").value||todayStr(), list=dayList(date), key=getKey(), out=$("#ev-out"), btn=$("#ev-ask");
+  if(!list.length){ toast("この日の記録がありません"); return; }
+  if(!key){ toast("先にAPIキーを登録してください"); showView("chart"); $("#ai-key").closest("details").open=true; $("#ai-key").scrollIntoView({block:"center"}); return; }
+  if(!navigator.onLine){ toast("インターネットにつながっていません"); return; }
+  evBusy=true; btn.disabled=true; btn.textContent="AIが評価しています…";
+  out.innerHTML=`<div class="empty">AIが評価しています…（30秒〜1分ほどかかります）</div>`;
+  const g=goal(), sig=daySig(list);
+  try{
+    if(!AnthropicLib) AnthropicLib=(await import(SDK_URL)).default;
+    const client=new AnthropicLib({ apiKey:key, dangerouslyAllowBrowser:true });
+    const stream=client.beta.messages.stream({
+      model:"claude-opus-5-5", max_tokens:16000,
+      betas:["server-side-fallback-2026-07-01"], fallbacks:"default",   // 安全判定で断られたときは別モデルで自動再実行
+      output_config:{ effort:"medium", format:{ type:"json_schema", schema:EVAL_SCHEMA } },   // 決まった形（JSON）で返してもらう
+      system:EVAL_SYSTEM,
+      messages:[{ role:"user", content:buildEvalPrompt(date) }]
+    });
+    let n=0; stream.on("text", d=>{ n+=d.length; const e=out.querySelector(".empty"); if(e) e.textContent=`AIが評価しています…（${n}文字）`; });
+    const msg=await stream.finalMessage();
+    if(msg.stop_reason==="refusal") throw new Error("AIがこの内容には答えられませんでした。相談内容を変えてもう一度試してください。");
+    if(msg.stop_reason==="max_tokens") throw new Error("回答が長くなりすぎて途中で終わりました。もう一度試してください。");
+    const text=msg.content.filter(b=>b.type==="text").map(b=>b.text).join("");
+    let result; try{ result=JSON.parse(text); }catch(e){ throw new Error("AIの回答を読み取れませんでした。もう一度試してください。"); }
+    saveEval(date,{ goal:g, at:Date.now(), sig, result });
+    evBusy=false; renderEval(); toast(`総合評価：${GRADES.includes(result.overall_grade)?result.overall_grade:"—"}`);
+  }catch(err){
+    evBusy=false; renderEval();
+    const m=(err && err.constructor===Error) ? err.message : aiErrMsg(err);
+    out.insertAdjacentHTML("afterbegin", `<div class="caution">${esc(m)}</div>`); console.warn(err);
+  }finally{ evBusy=false; btn.disabled=!dayList($("#w-date").value||todayStr()).length; }
 };
 function renderBody(){
   const all=bodies(), s=all.filter(b=>inRange(b.date,brange));
@@ -897,6 +1068,7 @@ $("#import-file").onchange=async ev=>{
     ids.forEach(k=>state.entries[k]=ent[k]);
     if(obj.profile && obj.profile.height>0){ profile.height=obj.profile.height; $("#b-h").value=profile.height; }
     if(obj.profile && obj.profile.exParts) profile.exParts=Object.assign({}, profile.exParts, obj.profile.exParts);
+    if(obj.profile && (obj.profile.goal==="増強"||obj.profile.goal==="維持")) profile.goal=obj.profile.goal;
     saveProfile();
     try{ localStorage.setItem(LS_KEY, JSON.stringify(state.entries)); }catch(e){}
     renderAll(); toast(`${ids.length}件を読み込みました`);
@@ -964,7 +1136,7 @@ renderRestPresets(); renderTimer();
 
 // ---------- init ----------
 $("#w-date").value=todayStr(); $("#b-date").value=todayStr(); $("#b-h").value=profile.height||"";
-setupDate("w-date"); setupDate("b-date");
+setupDate("w-date", ()=>renderEval()); setupDate("b-date");
 resetSets(); refreshKeyUI();
 initStorage();
 if("serviceWorker" in navigator && location.protocol!=="file:"){
