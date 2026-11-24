@@ -61,9 +61,27 @@ button.icon{min-width:44px;padding:0;color:var(--muted)}
 button.icon:hover{color:var(--danger)}
 button:disabled{opacity:.5;cursor:not-allowed}
 .sets{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
-.set{display:grid;grid-template-columns:34px 1fr 1fr 44px;gap:8px;align-items:center}
+.set{display:grid;grid-template-columns:28px 1fr 1fr 44px 40px;gap:6px;align-items:center}
 .set .no{font-size:13px;color:var(--muted);text-align:center;font-variant-numeric:tabular-nums}
-.set-head{display:grid;grid-template-columns:34px 1fr 1fr 44px;gap:8px;font-size:12px;color:var(--text2)}
+.set-head{display:grid;grid-template-columns:28px 1fr 1fr 44px 40px;gap:6px;font-size:12px;color:var(--text2)}
+.set-head .c{text-align:center}
+.set button.done{min-width:44px;padding:0;font-size:18px;font-weight:700;color:var(--muted)}
+.set button.done[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.set.is-done input{color:var(--text2)}
+.rest-set{margin:4px 0 14px}
+.rest-bar{position:fixed;left:0;right:0;bottom:calc(60px + env(safe-area-inset-bottom));display:none;z-index:9;padding:0 12px 8px}
+body.timer-on .rest-bar{display:block}
+body.timer-on{padding-bottom:calc(160px + env(safe-area-inset-bottom))}
+body.timer-on .toast{bottom:calc(170px + env(safe-area-inset-bottom))}
+.rest-box{max-width:696px;margin:0 auto;background:var(--surface);border:1px solid var(--accent);border-radius:14px;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,.15)}
+.rest-prog{height:4px;background:var(--grid)}
+.rest-prog i{display:block;height:100%;width:100%;background:var(--accent)}
+.rest-in{display:flex;align-items:center;gap:8px;padding:8px 10px 8px 14px}
+.rest-in .t{flex:1;min-width:0}
+.rest-in .k{font-size:11px;color:var(--text2)}
+.rest-in b{font-size:28px;line-height:1.1;font-variant-numeric:tabular-nums}
+.rest-in button{padding:0 10px;font-size:14px}
+.rest-bar.ending b{color:var(--series-2)}
 .unit-wrap{position:relative}
 .unit-wrap input{padding-right:40px}
 .unit-wrap span{position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:13px;color:var(--muted);pointer-events:none}
@@ -173,10 +191,15 @@ button.danger{background:var(--danger);border-color:var(--danger);color:#fff;fon
       </div>
       <div class="quick"><button type="button" id="q-apply">↓ セットに反映</button></div>
 
-      <div class="set-head"><span></span><span>重量 (kg)</span><span>回数</span><span></span></div>
+      <div class="set-head"><span></span><span>重量 (kg)</span><span>回数</span><span class="c">完了</span><span></span></div>
       <div class="sets" id="sets"></div>
       <div class="quick">
         <button type="button" id="add-set">＋ セットを追加</button>
+      </div>
+      <div class="rest-set">
+        <label>休憩タイマー（セットの ✓ を押すと自動でスタート）</label>
+        <div class="chips" id="rest-presets" role="group" aria-label="休憩時間"></div>
+        <button type="button" id="rest-start" style="width:100%;margin-top:8px">休憩スタート</button>
       </div>
       <div class="field"><label for="w-memo">メモ（任意）</label><input id="w-memo" placeholder="フォーム、調子など"></div>
       <button class="primary" id="save-workout">保存する</button>
@@ -305,6 +328,18 @@ button.danger{background:var(--danger);border-color:var(--danger);color:#fff;fon
   </div>
 </nav>
 
+<div class="rest-bar" id="rest-bar">
+  <div class="rest-box">
+    <div class="rest-prog"><i id="rest-prog"></i></div>
+    <div class="rest-in">
+      <div class="t"><div class="k">休憩中（残り）</div><b id="rest-time" role="timer">0:00</b></div>
+      <button type="button" data-adj="-15">−15秒</button>
+      <button type="button" data-adj="15">＋15秒</button>
+      <button type="button" class="icon" id="rest-stop" aria-label="タイマーを止める">✕</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 <div class="modal-bg" id="modal"><div class="modal"><p id="modal-msg"></p>
   <div class="row"><button id="modal-cancel">キャンセル</button><button class="danger" id="modal-ok">削除</button></div></div></div>
@@ -387,8 +422,13 @@ function setRow(w="",r=""){
   div.innerHTML=`<span class="no"></span>
     <div class="unit-wrap"><input type="number" inputmode="decimal" step="0.25" min="0" class="sw" placeholder="自重" value="${esc(w)}"><span>kg</span></div>
     <div class="unit-wrap"><input type="number" inputmode="numeric" step="1" min="1" class="sr" placeholder="0" value="${esc(r)}"><span>回</span></div>
-    <button type="button" class="icon" aria-label="このセットを削除">✕</button>`;
-  div.querySelector("button").onclick=()=>{ div.remove(); numberSets(); };
+    <button type="button" class="done" aria-label="このセットを完了" aria-pressed="false">✓</button>
+    <button type="button" class="icon del" aria-label="このセットを削除">✕</button>`;
+  div.querySelector(".del").onclick=()=>{ div.remove(); numberSets(); };
+  const done=div.querySelector(".done");
+  done.onclick=()=>{ const on=done.getAttribute("aria-pressed")!=="true";
+    done.setAttribute("aria-pressed",on); div.classList.toggle("is-done",on);
+    if(on) startTimer(); };   // セット完了で休憩タイマーを自動スタート
   $("#sets").appendChild(div); numberSets();
 }
 function numberSets(){ document.querySelectorAll("#sets .set .no").forEach((n,i)=>n.textContent=(i+1)); }
@@ -862,6 +902,65 @@ $("#import-file").onchange=async ev=>{
     renderAll(); toast(`${ids.length}件を読み込みました`);
   }catch(e){ toast("読み込めませんでした（ファイルを確認してください）"); }
 };
+
+// ---------- 休憩タイマー（終わる時刻で数えるので、画面を消しても時間はずれない） ----------
+const TIMER_KEY="gymlog.timer", REST_PRESETS=[30,60,90,120,180];
+let timer={end:0,total:0}, tickId=null, actx=null, wakeLock=null;
+const restSec=()=>profile.restSec>0?profile.restSec:90;
+const mmss=s=>{ s=Math.max(0,Math.ceil(s)); return Math.floor(s/60)+":"+String(s%60).padStart(2,"0"); };
+const secLabel=s=>s<60?s+"秒": s%60?Math.floor(s/60)+"分"+(s%60)+"秒": (s/60)+"分";
+function renderRestPresets(){
+  $("#rest-presets").innerHTML=REST_PRESETS.map(s=>`<button type="button" data-sec="${s}" aria-pressed="${s===restSec()}">${secLabel(s)}</button>`).join("");
+}
+$("#rest-presets").onclick=e=>{ const b=e.target.closest("[data-sec]"); if(!b) return;
+  profile.restSec=+b.dataset.sec; saveProfile(); renderRestPresets();
+  if(timer.end) startTimer(); else { renderTimer(); toast(`休憩時間を${secLabel(restSec())}にしました`); } };
+function saveTimer(){ try{ timer.end?localStorage.setItem(TIMER_KEY,JSON.stringify(timer)):localStorage.removeItem(TIMER_KEY); }catch(e){} }
+function unlockAudio(){ try{ actx=actx||new (window.AudioContext||window.webkitAudioContext)(); if(actx.state==="suspended") actx.resume(); }catch(e){} }
+function beep(){
+  try{ if(!actx) return; const t0=actx.currentTime;
+    [0,0.35,0.7].forEach(d=>{ const o=actx.createOscillator(), g=actx.createGain();
+      o.type="sine"; o.frequency.value=880; o.connect(g); g.connect(actx.destination);
+      g.gain.setValueAtTime(0.0001,t0+d); g.gain.exponentialRampToValueAtTime(0.4,t0+d+0.02); g.gain.exponentialRampToValueAtTime(0.0001,t0+d+0.25);
+      o.start(t0+d); o.stop(t0+d+0.3); }); }catch(e){}
+}
+async function keepAwake(on){   // タイマー中は画面が消えないようにする（対応している端末だけ）
+  try{
+    if(on && !wakeLock && navigator.wakeLock && document.visibilityState==="visible"){
+      wakeLock=await navigator.wakeLock.request("screen"); wakeLock.addEventListener("release",()=>{ wakeLock=null; });
+    } else if(!on && wakeLock){ const w=wakeLock; wakeLock=null; await w.release(); }
+  }catch(e){ wakeLock=null; }
+}
+function startTimer(sec){
+  sec=sec||restSec();
+  timer={end:Date.now()+sec*1000,total:sec*1000}; saveTimer();
+  unlockAudio(); keepAwake(true);
+  clearInterval(tickId); tickId=setInterval(renderTimer,250); renderTimer();
+}
+function stopTimer(){
+  timer={end:0,total:0}; saveTimer(); clearInterval(tickId); tickId=null; keepAwake(false); renderTimer();
+}
+function renderTimer(){
+  const on=timer.end>0;
+  document.body.classList.toggle("timer-on",on);
+  $("#rest-start").textContent=on?"休憩をやめる":`休憩スタート（${secLabel(restSec())}）`;
+  if(!on) return;
+  const left=(timer.end-Date.now())/1000;
+  if(left<=0){ stopTimer(); beep(); try{ if(navigator.vibrate) navigator.vibrate([300,150,300,150,300]); }catch(e){}
+    toast("休憩終了！次のセットへ"); return; }
+  $("#rest-time").textContent=mmss(left);
+  $("#rest-prog").style.width=Math.min(100,left*1000/timer.total*100)+"%";
+  $("#rest-bar").classList.toggle("ending",left<=10);
+}
+$("#rest-start").onclick=()=>{ if(timer.end){ stopTimer(); toast("休憩タイマーを止めました"); } else startTimer(); };
+$("#rest-stop").onclick=()=>{ stopTimer(); toast("休憩タイマーを止めました"); };
+document.querySelectorAll("[data-adj]").forEach(b=>b.onclick=()=>{
+  if(!timer.end) return; const d=+b.dataset.adj*1000;
+  timer.end+=d; timer.total=Math.max(timer.total+(d>0?d:0), timer.end-Date.now()); saveTimer(); renderTimer(); });
+document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible"){ renderTimer(); if(timer.end) keepAwake(true); } });
+try{ const t=JSON.parse(localStorage.getItem(TIMER_KEY)||"null");   // 開き直したときも続きから
+  if(t && t.end>Date.now()){ timer=t; tickId=setInterval(renderTimer,250); } else localStorage.removeItem(TIMER_KEY); }catch(e){}
+renderRestPresets(); renderTimer();
 
 // ---------- init ----------
 $("#w-date").value=todayStr(); $("#b-date").value=todayStr(); $("#b-h").value=profile.height||"";
