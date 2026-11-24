@@ -150,6 +150,9 @@ button.icon svg{width:18px;height:18px}
 .chips button{min-height:38px;padding:0 12px;border-radius:19px;font-size:14px;background:var(--bg)}
 .chips button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:700}
 .stat .sub{font-size:11px;color:var(--text2)}
+.part-pick{display:flex;align-items:center;gap:8px;margin-top:10px}
+.part-pick label{margin:0;flex:1}
+.part-pick select{width:auto;min-width:110px}
 textarea{min-height:64px;resize:vertical}
 .advice ul{margin:0 0 6px;padding-left:20px}
 .advice li{margin:4px 0;font-size:14px}
@@ -196,6 +199,8 @@ button.danger{background:var(--danger);border-color:var(--danger);color:#fff;fon
         <input id="w-ex" placeholder="例：ベンチプレス" autocomplete="off">
         <div class="part-tabs" id="part-tabs" role="group" aria-label="部位"></div>
         <div class="chips" id="ex-chips"></div>
+        <div class="part-pick" id="part-pick" style="display:none"><label for="w-part">この種目の部位（違っていたら変えられます）</label>
+          <select id="w-part"><option>胸</option><option>背中</option><option>脚</option><option>肩</option><option>腕</option><option>腹</option><option>その他</option></select></div>
         <div class="hint" id="last-hint"></div>
       </div>
 
@@ -407,10 +412,20 @@ const PARTS = {
   "腕":["ダンベルカール","バーベルカール","ハンマーカール","トライセプスエクステンション","プレスダウン","フレンチプレス"],
   "腹":["クランチ","レッグレイズ","アブローラー","ロシアンツイスト","プランク"]
 };
+// 種目名のことばから部位を推測する（上から順に調べる。例：「レッグカール」は腕より先に脚で判定）
+const PART_RULES = [
+  ["腹", /クランチ|アブドミナル|アブローラー|腹|レッグレイズ|プランク|ツイスト|トルソー|シットアップ|ニーレイズ/],
+  ["脚", /レッグ|スクワット|ランジ|ヒップ|カーフ|内転|外転|グルート|お尻|太もも/],
+  ["腕", /カール|トライセ|プレスダウン|プッシュダウン|キックバック|スカルクラッシャー|フレンチプレス|ナロー|オーバーヘッド(?!プレス)|リスト|フレクション|スピネーション|前腕|二頭|三頭/],
+  ["肩", /ショルダー|レイズ|リアデルト|デルト|フェイスプル|アーノルド|アップライト|シュラッグ|オーバーヘッドプレス/],
+  ["背中", /ラット|プルダウン|ロウ|ロー$|チンニング|懸垂|デッドリフト|バックエクステンション|背/],
+  ["胸", /ベンチ|チェスト|ペック|フライ|クロスオーバー|ディップス|腕立て|プッシュアップ|プルオーバー|プレス|胸/]
+];
+function guessPart(name){ for(const [p,re] of PART_RULES) if(re.test(name)) return p; return null; }
 function partOf(name){
-  if(profile.exParts && profile.exParts[name]) return profile.exParts[name];
+  if(profile.exParts && profile.exParts[name]) return profile.exParts[name]==="その他" ? null : profile.exParts[name];
   for(const p in PARTS) if(PARTS[p].includes(name)) return p;
-  return null;
+  return guessPart(name);
 }
 let curPart = "よく使う";
 function saveProfile(){ try{ localStorage.setItem(PROFILE_KEY, JSON.stringify(profile)); }catch(e){} }
@@ -521,7 +536,16 @@ function renderChips(){
   else { const mine=used.filter(n=>partOf(n)===curPart);   // 使ったことがある種目を先に
          list=[...mine, ...PARTS[curPart].filter(n=>!mine.includes(n))]; }
   $("#ex-chips").innerHTML=list.map(n=>`<button type="button" data-ex="${esc(n)}" aria-pressed="${n===cur}">${esc(n)}</button>`).join("");
+  // 入力中の種目の部位を表示（違っていたら変えられる）
+  const pick=$("#part-pick"), known=cur && (partOf(cur) || used.includes(cur));
+  pick.style.display=known?"":"none";
+  if(known) $("#w-part").value=partOf(cur)||"その他";
 }
+$("#w-part").onchange=()=>{
+  const name=$("#w-ex").value.trim(), p=$("#w-part").value; if(!name) return;
+  profile.exParts=Object.assign({}, profile.exParts, {[name]:p}); saveProfile();
+  curPart=p; renderChips(); toast(`「${name}」を${p}にしました`);
+};
 $("#part-tabs").onclick=e=>{ const b=e.target.closest("[data-part]"); if(!b) return; curPart=b.dataset.part; renderChips(); };
 $("#ex-chips").onclick=e=>{ const b=e.target.closest("[data-ex]"); if(!b) return; $("#w-ex").value=b.dataset.ex; renderChips(); showLastHint(); };
 function showLastHint(){

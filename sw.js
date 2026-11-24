@@ -1,6 +1,6 @@
 // 筋トレ記録 Service Worker — オフライン対応
 // アプリを更新したら VERSION の数字を上げてください
-const VERSION = "v9";
+const VERSION = "v10";
 const CACHE = "gymlog-" + VERSION;
 const FILES = ["./", "./index.html", "./manifest.webmanifest",
   "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
