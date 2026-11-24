@@ -150,6 +150,8 @@ button.icon svg{width:18px;height:18px}
 .chips button{min-height:38px;padding:0 12px;border-radius:19px;font-size:14px;background:var(--bg)}
 .chips button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:700}
 .stat .sub{font-size:11px;color:var(--text2)}
+.set input::placeholder{font-size:13px}
+.next .row2{font-size:13px;color:var(--text2);margin-top:2px}
 .part-pick{display:flex;align-items:center;gap:8px;margin-top:10px}
 .part-pick label{margin:0;flex:1}
 .part-pick select{width:auto;min-width:110px}
@@ -175,7 +177,7 @@ details summary{cursor:pointer;font-size:13px;color:var(--text2);margin-top:8px;
 .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;align-items:center;justify-content:center;z-index:30;padding:16px}
 .modal-bg.show{display:flex}
 .modal{background:var(--surface);border-radius:14px;padding:18px;max-width:340px;width:100%}
-.modal p{margin:0 0 14px}
+.modal p{margin:0 0 14px;white-space:pre-line}
 .modal .row button{flex:1}
 button.danger{background:var(--danger);border-color:var(--danger);color:#fff;font-weight:700}
 </style>
@@ -212,7 +214,15 @@ button.danger{background:var(--danger);border-color:var(--danger);color:#fff;fon
       </div>
       <div class="quick"><button type="button" id="q-apply">↓ セットに反映</button></div>
 
+      <div class="suggest" id="suggest" style="display:none">
+        <div class="next" id="suggest-box"></div>
+        <div class="quick" style="margin-bottom:10px">
+          <button type="button" id="fill-prev">前回と同じ</button>
+          <button type="button" id="fill-next">おすすめを入れる</button>
+        </div>
+      </div>
       <div class="set-head"><span></span><span>重量 (kg)</span><span>回数</span><span class="c">完了</span><span></span></div>
+      <div class="hint" id="ph-note" style="display:none;margin:-2px 0 6px">うすい数字は前回の記録です（まだ入力されていません）</div>
       <div class="sets" id="sets"></div>
       <div class="quick">
         <button type="button" id="add-set">＋ セットを追加</button>
@@ -487,7 +497,7 @@ function setRow(w="",r=""){
     if(on) startTimer(); };   // セット完了で休憩タイマーを自動スタート
   $("#sets").appendChild(div); numberSets();
 }
-function numberSets(){ document.querySelectorAll("#sets .set .no").forEach((n,i)=>n.textContent=(i+1)); }
+function numberSets(){ document.querySelectorAll("#sets .set .no").forEach((n,i)=>n.textContent=(i+1)); setPlaceholders(); }
 function readSets(){
   // 重量が空欄のセットは自重（0kg）として扱う
   return [...document.querySelectorAll("#sets .set")].map(s=>{ const wv=s.querySelector(".sw").value.trim();
@@ -548,13 +558,46 @@ $("#w-part").onchange=()=>{
 };
 $("#part-tabs").onclick=e=>{ const b=e.target.closest("[data-part]"); if(!b) return; curPart=b.dataset.part; renderChips(); };
 $("#ex-chips").onclick=e=>{ const b=e.target.closest("[data-ex]"); if(!b) return; $("#w-ex").value=b.dataset.ex; renderChips(); showLastHint(); };
-function showLastHint(){
-  const name=$("#w-ex").value.trim(); const h=$("#last-hint");
-  const prev=Object.entries(state.entries).filter(([id,e])=>e.kind==="workout"&&id!==editingId&&e.exercise===name).map(([,e])=>e)
-    .sort((a,b)=>(b.date+b.t).localeCompare(a.date+a.t))[0];
-  if(!prev){ h.textContent=""; return; }
-  h.textContent=`前回（${shortDate(prev.date)}）：`+summarizeSets(prev.sets);
+// 前回＝記録の日付より前で、いちばん新しい日のその種目の全セット（同じ日に分けて記録していてもまとめる）
+function prevSession(name, date){
+  const ws=Object.entries(state.entries).filter(([id,e])=>e.kind==="workout"&&id!==editingId&&e.exercise===name&&e.date<date).map(([,e])=>e);
+  if(!ws.length) return null;
+  const d=ws.reduce((a,e)=>e.date>a?e.date:a,"");
+  return { date:d, sets:ws.filter(e=>e.date===d).sort((a,b)=>a.t-b.t).flatMap(e=>e.sets) };
 }
+let sugg={prev:null, plan:null};
+function showLastHint(){
+  const name=$("#w-ex").value.trim(), date=$("#w-date").value||todayStr();
+  const prev=name?prevSession(name,date):null, a=name?analyze(name,date):null, plan=a&&a.plan;
+  sugg={prev, plan};
+  $("#last-hint").textContent="";
+  $("#suggest").style.display=prev?"":"none";
+  if(prev){
+    const w=plan?(plan.w===0?"自重":fmt(plan.w,2)+"kg"):"";
+    $("#suggest-box").innerHTML=`<div class="k">前回（${esc(shortDate(prev.date))}）</div><div class="row2">${esc(summarizeSets(prev.sets))}</div>`+
+      (plan?`<div class="k" style="margin-top:6px">今回のおすすめ${plan.note?`（${esc(plan.note)}）`:""}</div><b>${esc(w)} × ${plan.r}回 × ${plan.n}セット</b>`:"");
+    $("#fill-next").disabled=!plan;
+  }
+  setPlaceholders();
+}
+// 空の欄には、前回の同じセット番号の値をうすく表示（入力はされていない）
+function setPlaceholders(){
+  const ps=sugg.prev&&sugg.prev.sets;
+  document.querySelectorAll("#sets .set").forEach((row,i)=>{
+    const s=ps&&(ps[i]||ps[ps.length-1]);
+    row.querySelector(".sw").placeholder = s ? (s.w===0?"自重":fmt(s.w,2)) : "自重";
+    row.querySelector(".sr").placeholder = s ? String(s.r) : "0";
+  });
+  $("#ph-note").style.display=ps?"":"none";
+}
+const setsHaveInput=()=>[...document.querySelectorAll("#sets .set input")].some(i=>i.value.trim()!=="");
+async function fillSets(list, label){
+  if(setsHaveInput() && !(await confirmBox(`入力中のセットを「${label}」に置き換えますか？`, "置き換える", false))) return;
+  $("#sets").innerHTML=""; list.forEach(s=>setRow(s.w===0?"":String(s.w), String(s.r)));
+  toast(`${label}を入れました。必要なら直してください`);
+}
+$("#fill-prev").onclick=()=>{ if(sugg.prev) fillSets(sugg.prev.sets, "前回と同じ"); };
+$("#fill-next").onclick=()=>{ const p=sugg.plan; if(p) fillSets(Array.from({length:p.n},()=>({w:p.w,r:p.r})), "おすすめ"); };
 function summarizeSets(sets){
   // group consecutive identical sets: 60kg×10回×3
   const out=[]; let i=0;
@@ -566,6 +609,9 @@ $("#save-workout").onclick=async()=>{
   const ex=$("#w-ex").value.trim(), date=$("#w-date").value||todayStr(), sets=readSets();
   if(!ex){ toast("種目を入力してください"); $("#w-ex").focus(); return; }
   if(!sets.length){ toast("回数を入力してください（重量は自重なら空欄でOK）"); return; }
+  // 重量が空欄（＝自重）なのに、前回はそのセットに重量があった → うすい数字を入力済みと勘違いしていないか確認
+  const pw=[...document.querySelectorAll("#sets .set")].some(r=>r.querySelector(".sw").value.trim()===""&&r.querySelector(".sr").value.trim()!==""&&/^[\d.,]+$/.test(r.querySelector(".sw").placeholder));
+  if(pw && !(await confirmBox("重量が空欄のセットがあります。自重（0kg）として保存しますか？\n（うすい数字は前回の記録で、入力はされていません）","自重で保存",false))) return;
   const editing=editingId, old=editing?state.entries[editing]:null;
   if(editing && !old){ endEdit(); toast("修正中の記録が見つかりません"); return; }
   if(PARTS[curPart] && !partOf(ex)){ profile.exParts=Object.assign({}, profile.exParts, {[ex]:curPart}); saveProfile(); }
@@ -793,37 +839,39 @@ function renderExChart(){
 
 // ---------- advice (自動分析：無料・通信なし) ----------
 const roundTo=(v,st)=>Math.round(v/st)*st;
-function analyze(ex){
-  const ss=dailySeries(ex, METRIC.e1rm.f, 0);   // 古い順、1日ごと {date, v:その日の最高推定1RM, sets}
+function analyze(ex, before){   // before を渡すと、その日より前の記録だけで計算する（記録画面のおすすめ用）
+  const ss=dailySeries(ex, METRIC.e1rm.f, 0).filter(x=>!before||x.date<before);   // 古い順、1日ごと {date, v:その日の最高推定1RM, sets}
   if(!ss.length) return null;
-  const today=todayStr(), last=ss[ss.length-1];
+  const today=before||todayStr(), last=ss[ss.length-1];
   const gap=Math.round(dayNum(today)-dayNum(last.date));
   const top=last.sets.reduce((a,s)=>(s.w>a.w||(s.w===a.w&&s.r>a.r))?s:a, last.sets[0]);
   const work=last.sets.filter(s=>s.w===top.w), nSets=work.length, minR=Math.min(...work.map(s=>s.r));
   const best=Math.max(...ss.map(x=>x.v)), sinceBest=ss.length-1-ss.findIndex(x=>x.v===best);
   const recent=ss.filter(x=>dayNum(today)-dayNum(x.date)<=28).length;
   const step=top.w>=20?2.5:1;
-  const points=[]; let next;
+  const points=[]; let next, plan, note="";
   if(top.w===0){
-    next=`自重 × ${top.r+1}回 × ${nSets}セット`;
+    next=`自重 × ${top.r+1}回 × ${nSets}セット`; plan={w:0,r:top.r+1};
     points.push("自重の種目は、まず1セットの回数を1回ずつ増やしていきましょう。");
   }else if(gap>=14){
-    next=`${fmt(roundTo(top.w*0.9,step),2)}kg × ${minR}回 × ${nSets}セット`;
+    next=`${fmt(roundTo(top.w*0.9,step),2)}kg × ${minR}回 × ${nSets}セット`; plan={w:roundTo(top.w*0.9,step),r:minR}; note=`${gap}日ぶりなので1割軽く`;
     points.push(`前回から${gap}日あいています。重量を1割ほど落とし、フォームを確かめながら再開しましょう。`);
   }else if(ss.length>=6 && sinceBest>=3){
-    next=`${fmt(roundTo(top.w*0.9,step),2)}kg × ${minR}回 × ${nSets}セット（軽めの日）`;
+    next=`${fmt(roundTo(top.w*0.9,step),2)}kg × ${minR}回 × ${nSets}セット（軽めの日）`; plan={w:roundTo(top.w*0.9,step),r:minR}; note="停滞気味なので軽めの日";
     points.push(`推定1RMが${sinceBest}回続けて更新されていません（停滞気味）。一度、重量を1割落とした軽めの日を入れて回復させてから再挑戦しましょう。`);
     points.push("回数の幅を変える（例：重めで5回、または軽めで12回）のも、停滞を抜けるのに有効です。");
   }else if(minR>=10){
-    next=`${fmt(top.w+step,2)}kg × 8回 × ${nSets}セット`;
+    next=`${fmt(top.w+step,2)}kg × 8回 × ${nSets}セット`; plan={w:top.w+step,r:8}; note=`全セット10回できたので${fmt(step,2)}kgアップ`;
     points.push(`前回は${fmt(top.w,2)}kgで全セット10回以上できています。${fmt(step,2)}kg上げて、8回から始めましょう。`);
   }else{
-    next=`${fmt(top.w,2)}kg × ${minR+1}回 × ${nSets}セット`;
+    next=`${fmt(top.w,2)}kg × ${minR+1}回 × ${nSets}セット`; plan={w:top.w,r:minR+1}; note="同じ重量で1回増やす";
     points.push(`前回は${fmt(top.w,2)}kg × ${minR}回。同じ重量で回数を1回ずつ増やし、全セット10回できたら重量を上げましょう。`);
   }
+  // 記録画面で入れるセット数：一番重いセットが1つだけ（ピラミッド型など）でも、3セットを目安にする
+  plan.n=Math.max(nSets, Math.min(3, last.sets.length)); plan.note=note;
   if(sinceBest===0 && ss.length>1) points.unshift("前回、推定1RMの自己ベストを更新しました。順調です！");
   if(recent<=2 && gap<14) points.push(`この4週間の実施は${recent}日です。伸ばしたい種目は週1〜2回を目安に続けると効果的です。`);
-  return {next, points};
+  return {next, points, plan};
 }
 let aiBusy=false;
 function renderAdvice(){
@@ -1160,7 +1208,7 @@ renderRestPresets(); renderTimer();
 
 // ---------- init ----------
 $("#w-date").value=todayStr(); $("#b-date").value=todayStr(); $("#b-h").value=profile.height||"";
-setupDate("w-date", ()=>renderEval()); setupDate("b-date");
+setupDate("w-date", ()=>{ renderEval(); showLastHint(); }); setupDate("b-date");
 resetSets(); refreshKeyUI();
 initStorage();
 if("serviceWorker" in navigator && location.protocol!=="file:"){
